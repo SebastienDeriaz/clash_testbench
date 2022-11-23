@@ -1,0 +1,27 @@
+Metadata-Version: 2.1
+Name: clash-testbench
+Version: 0.0.1
+Summary: Clash-lang testbench
+Author: Sebastien Deriaz
+Author-email: sebastien.deriaz1@gmail.com
+License: UNKNOWN
+Keywords: clash,clash-lang,testbench,haskell,HDL,VHDL,FPGA
+Platform: UNKNOWN
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Education
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: Unix
+Classifier: Operating System :: MacOS :: MacOS X
+Classifier: Operating System :: Microsoft :: Windows
+Description-Content-Type: text/markdown
+License-File: LICENSE
+
+# Clash_testbench
+
+A python utility to facilitate the creation and execution of Clash testbenches
+
+## Installation
+
+``pip install clash-testbench``
+
+
