@@ -3,51 +3,39 @@
 #
 
 #from subprocess import Popen, PIPE, call
-import pexpect
+#import pexpect
+from subprocess import PIPE, Popen
+import re
 
-_PROMPT = "clashi>"
+_PROMPT = b"clashi>"
 class Clashi:
     def __init__(self):
         """
         Clashi instance
         """
         try:
-            #self._process = Popen(['clashi'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
-            self._process = pexpect.spawn('clashi')
-            self._process.expect('clashi>')
-            self._process.flush()
-            
+            self._process = Popen(['clashi'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
         except FileNotFoundError as e:
             print("Couldn't find clashi in the current environment")
 
-    def load(self, file):
-        """
-        Load a file inside clashi
-        """
-        print(f"Loading file {file}...")
-        #(stdout, stderr) = self._process.communicate()
-        self._process.write(f':l {file}\n')
-        self._process.expect(_PROMPT, timeout=20)
-        #output = self._process.read_nonblocking(size=10000,timeout=1)
-        output = self._process.before
-        print(f"output : {output}")
-        #print(f"Read output : {stdout, stderr}")
-        #output = self._process.stdout.readline()
-        #print(f"output : {output}")
-        #if output:
-        #    raise RuntimeError(self._process.stderr.read())
-
-    def sampleN(self, entity, N):
+    def sampleN(self, file, N, entity, inputs):
         """
         run SampleN on a specified module
         """
-        self._process.flush()
-        print(f"Running sampleN")
-        #(stdout, stderr) = self._process.communicate()
-        self._process.write(f'sampleN {N} {entity}\n')
-        self._process.expect(_PROMPT)
-        print("ok")
-        output = self._process.before
-        print(f"Read : {output}")
+        # Load the file
+        load_file_command = f':l {file}\n'
+        # Run the testbench command
+        command = f'sampleN @System {N} ({entity} {inputs})\n'
+
+        # Everything is done at once because the communication method can only be called once
+        stdout, stderr = self._process.communicate((load_file_command + command).encode('utf-8'))
+
+        # The testbench output is located one line before the "leaving ghci" message
+        testbench_output = (stdout.split(_PROMPT)[-2]).decode('utf-8')
+        # Capture the groups
+        groups = re.findall(r'(\([\w,]+\))', testbench_output)
+        # Remove the ( ) and split by comma
+        output = [x[1:-1].split(',') for x in groups]
+        # output is a list of tuples (with each value corresponding to an output)
         return output

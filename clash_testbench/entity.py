@@ -1,7 +1,5 @@
 # Clash entity class
 # Sébastien Deriaz - 22.11.2022
-from pathlib import Path
-
 from .testbench import Testbench, TestReport
 
 
@@ -36,16 +34,12 @@ class Entity:
         """
 
         # Generate testbench
-        tb = Testbench(self._entity, self._module)
+        tb = Testbench(self._file, self._entity)
         tb.setInputs(stimulis)
         tb.setOutputs(outputs)
 
-        # Testbench for ./folder/file.hs is ./folder/file_tb.hs
-        p = Path(self._file)
+        report = tb.run()
 
-        filename = f'{p.stem}_tb{p.suffix}'
-        tb.create(p.parents[0] / filename)
-
-        return tb.run()
+        return report
 
 
