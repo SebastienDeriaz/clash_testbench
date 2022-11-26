@@ -1,19 +1,23 @@
 # Clash entity class
 # Sébastien Deriaz - 22.11.2022
-from .testbench import Testbench, TestReport
+from .testbench import Testbench
 
 
 
 class Entity:
-    def __init__(self, hs_file, entity, module):
+    def __init__(self, hs_file, entity):
         """
         New instance of an entity under test
+
+        hs_file : str
+            Path to the .hs file
+        entity : str
+            Name of the entity (must start with a lowercase letter)
         """
         self._file = hs_file
         self._entity = entity
-        self._module = module
 
-    def test(self, stimulis : dict, outputs : dict) -> TestReport:
+    def test(self, stimulis : dict, outputs : dict) -> Testbench:
         """
         Test the entity with a list of stimulis
 
@@ -38,8 +42,8 @@ class Entity:
         tb.setInputs(stimulis)
         tb.setOutputs(outputs)
 
-        report = tb.run()
+        tb.run()
 
-        return report
+        return tb
 
 
