@@ -8,44 +8,36 @@ from rich.text import Text
 from .stimulis import Stimuli
 from .clashi import Clashi
 
-class TestReport:
-    def __init__(self, outputsComparisons) -> None:
+class ExpectedActualPair:
+    def __init__(self, name, expectedValues, actualValues):
+        self._name = name
+        self._expected = expectedValues
+        self._actual = actualValues
+        self.valid = np.array_equal(self._expected, self._actual)
+
+    def message(self):
+        return f"{self._name} doesn't match expected signal"
+
+    def print(self, print_values = False):
         """
-        Test report instance
+        Print pass/fail of actual signal compared to expected signal.
+
+        Parameters
+        ----------
+        force_print : bool
+            Force print signal values even when the test passes
         """
-        self._outputs = outputsComparisons
+        c = Console()
+        # TODO : Change those icons
+        if self.valid:
+            c.print(f"✅ {self._name}")
+        else:
+            c.print(f"❌ {self._name}")
         
+        if (not self.valid) or print_values:
+            c.print(f"  expected = {self._expected}")
+            c.print(f"  actual   = {self._actual}")
 
-    def __bool__(self):
-        valid = True
-
-        for key, (A, B) in self._outputs.items():
-            if not np.array_equal(A._values, B._values):
-                valid = False
-
-        return valid
-    
-    def report(self, colors=True) -> str:
-        t = Text()
-
-        for key, (A, B) in self._outputs.items():
-            t.append(f"➩ {key}\n", style="bold cyan")
-            if np.array_equal(A._values, B._values):
-                t.append("    ok\n")
-            else:
-                t.append("    error\n")
-                t.append(f"    A = {A}\n")
-                t.append(f"    B = {B}\n")
-        return t
-    
-    def print(self):
-        Console().print(self.report(True))
-
-    def __str__(self) -> str:
-        return str(self.report(False))
-
-    def __repr__(self) -> str:
-        return str(self.report(False))
 class Testbench:
     def __init__(self, file, entity) -> None:
         """
@@ -79,15 +71,25 @@ class Testbench:
         #self._clashi.load(self._file)
         # Sample the testbench
         testbenchOutput = self._clashi.sampleN(self._file, self.N, self.entity, self.Inputs)
-
         # Convert the output tuples into each output signal
         outputs = list(zip(*testbenchOutput))
+        
+        self._signals = []
+        for (output_signal_name, output_signal_class), testbenchOutput in zip(self._outputSignals.items(), outputs): 
+            # Recreate the same class as expected (to parse the data)
+            actual = type(output_signal_class)(testbenchOutput)
+            # Create an expected-actual pair to analyse and compare the signals
+            self._signals.append(ExpectedActualPair(output_signal_name, output_signal_class._values, actual._values))
 
-        outputs_dict = {}
-        for (output_signal_name, output_signal_class), testbenchOutput in zip(self._outputSignals.items(), outputs):
-            outputs_dict[output_signal_name] = (output_signal_class, type(output_signal_class)(testbenchOutput))
 
-        return TestReport(outputs_dict)
+    def __iter__(self):
+        self._signals_iter = iter(self._signals)
+        return self
+
+    def __next__(self):
+        return next(self._signals_iter)
+
+    
         
 
 
