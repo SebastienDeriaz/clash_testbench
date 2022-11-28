@@ -32,16 +32,15 @@ class ExpectedActualPair:
         c = Console()
         # TODO : Change those icons
         if self.valid:
-            c.print(f"✅ {self._name}")
+            c.print(f"✅ {self._name}", style='bold green')
         else:
-            c.print(f"❌ {self._name}")
+            c.print(f"❌ {self._name}", style='bold red')
         
         if (not self.valid) or print_values:
-            arrays_str = np.array2string(np.stack([self._expected, self._actual]), suppress_small=True) #prefix='  expected = \n  actual   = '
+            arrays_str = np.array2string(np.stack([self._expected, self._actual]), suppress_small=True)
             arrays_str = arrays_str.replace('[', ' ').replace(']', ' ')
-            for line, label in zip(arrays_str.split('\n'), ['expected', 'actual']):
-                c.print(f"{label:<8s} = ", style='bold ', end='')
-                c.print(line)
+            for line, label, style in zip(arrays_str.split('\n'), ['expected', 'actual'], ['cyan', 'dark_orange3']):
+                c.print(f"{label:<8s} ={line}", style=style, highlight=False)
 
 class Testbench:
     def __init__(self, file, entity) -> None:
