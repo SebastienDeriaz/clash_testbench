@@ -5,14 +5,16 @@ import numpy as np
 from rich.console import Console
 from rich.text import Text
 
-from .stimulis import Stimuli
+from .signals import Signal
 from .clashi import Clashi
 
+from itertools import groupby
+
 class ExpectedActualPair:
-    def __init__(self, name, expectedValues, actualValues):
+    def __init__(self, name, expectedValues : np.array, actualValues : np.array):
         self._name = name
-        self._expected = expectedValues
-        self._actual = actualValues
+        self._expected : np.array = expectedValues
+        self._actual  : np.array = actualValues
         self.valid = np.array_equal(self._expected, self._actual)
 
     def message(self):
@@ -35,8 +37,11 @@ class ExpectedActualPair:
             c.print(f"❌ {self._name}")
         
         if (not self.valid) or print_values:
-            c.print(f"  expected = {self._expected}")
-            c.print(f"  actual   = {self._actual}")
+            arrays_str = np.array2string(np.stack([self._expected, self._actual]), suppress_small=True) #prefix='  expected = \n  actual   = '
+            arrays_str = arrays_str.replace('[', ' ').replace(']', ' ')
+            for line, label in zip(arrays_str.split('\n'), ['expected', 'actual']):
+                c.print(f"{label:<8s} = ", style='bold ', end='')
+                c.print(line)
 
 class Testbench:
     def __init__(self, file, entity) -> None:
@@ -46,23 +51,44 @@ class Testbench:
         # File
         self._file = file
         self.entity = entity
+        self.actualOutputSignals = None
+        self._lengths = {}
 
-    def setInputs(self, signals : "dict[str, Stimuli]"):
+    def _add_lengths(self, signals : "dict[str, Signal]"):
+        for signal_name, signal in signals.items():
+            self._lengths[signal_name] = len(signal)
+
+    def _check_lengths(self):
+        g = groupby(list(self._lengths.values()))
+        if not (next(g, True) and not next(g, False)):
+            # The list isn't equal
+            raise ValueError(f"All signals must be of the same length ({self._lengths})")
+
+    def setInputs(self, signals : "dict[str, Signal]"):
         """
         Add the testbench stimulis
         """
         TAB = 4*' '
+        self.inputSignals = signals
 
-        self.Inputs = ' '.join([f"(fromList [{','.join(s.values())}])" for s in signals.values()])
+        # Check if all the signals are the same length, if they aren't print them
+        self._add_lengths(signals)
+        self._check_lengths()
+        
+    
+        self.Inputs = ' '.join([f"(fromList [{','.join(s.valuesStr())}])" for s in signals.values()])
 
-        self.N = len(list(signals.values())[0].values())
+        self.N = len(list(signals.values())[0].valuesStr())
 
-    def setOutputs(self, signals : "dict[str, Stimuli]"):
+    def setOutputs(self, signals : "dict[str, Signal]"):
         """
         Add the testbench outputs
         """
+        # CHeck if all the signals are the same length
+        self._add_lengths(signals)
+        self._check_lengths()
 
-        self._outputSignals = signals
+        self.expectedOutputSignals = signals
 
     def run(self):
 
@@ -71,13 +97,13 @@ class Testbench:
         #self._clashi.load(self._file)
         # Sample the testbench
         testbenchOutput = self._clashi.sampleN(self._file, self.N, self.entity, self.Inputs)
-        # Convert the output tuples into each output signal
-        outputs = list(zip(*testbenchOutput))
         
         self._signals = []
-        for (output_signal_name, output_signal_class), testbenchOutput in zip(self._outputSignals.items(), outputs): 
+        self.actualOutputSignals = {}
+        for (output_signal_name, output_signal_class), testbenchSignal in zip(self.expectedOutputSignals.items(), testbenchOutput): 
             # Recreate the same class as expected (to parse the data)
-            actual = type(output_signal_class)(testbenchOutput)
+            actual = output_signal_class.fromActual(testbenchSignal)
+            self.actualOutputSignals[output_signal_name] = actual
             # Create an expected-actual pair to analyse and compare the signals
             self._signals.append(ExpectedActualPair(output_signal_name, output_signal_class._values, actual._values))
 
