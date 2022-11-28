@@ -38,8 +38,20 @@ class Clashi:
         # The testbench output is located one line before the "leaving ghci" message
         testbench_output = (stdout.split(_PROMPT)[-2]).decode('utf-8')
         # Capture the groups
-        groups = re.findall(r'(\([\w,]+\))', testbench_output)
-        # Remove the ( ) and split by comma
-        output = [x[1:-1].split(',') for x in groups]
+        if '(' in testbench_output:
+            # It's a list of tuples
+            groups = re.findall(r'(\([\w,]+\))', testbench_output)
+            # Remove the ( ) and split by comma
+            list_of_tuples = [x[1:-1].split(',') for x in groups]
+
+            # Transpose [(a[0], b[0], ...), (a[1], b[1], ...)] -> [(a[0], a[1],...), ([b[0], b[1], ...)]
+            # Convert the output tuples into each output signal
+            output = list(zip(*list_of_tuples))
+        else:
+            # It's only comma-separated values
+            raw = ''.join([c for c in testbench_output if str.isdigit(c) or c == ','])
+            # Making a list of list, because there's only one signal
+            output = [raw.split(',')]
+
         # output is a list of tuples (with each value corresponding to an output)
         return output
