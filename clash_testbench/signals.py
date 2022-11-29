@@ -16,6 +16,9 @@ class Signal:
     def type(self) -> str:
         pass
 
+    def fit(self, N):
+        self._values = np.repeat(self._values[0], N)
+
     def fromActual(self, actualValues):
         pass
 
@@ -28,20 +31,24 @@ class Signal:
     def __len__(self):
         return len(self.valuesInt())
     
-    
-
-
+    def __iadd__(self, x):
+        pass
 
 class Bit(Signal):
     def __init__(self, values : list) -> None:
         """
         Bit Class
         """
-        if not (isinstance(values, list) or isinstance(values, np.ndarray) or isinstance(values, tuple)):
+
+        if isinstance(values, list) or isinstance(values, np.ndarray) or isinstance(values, tuple):
+            # Convert to int (for example if the data comes from the testbench)
+            self._values = np.array(values).astype(int)
+            self.constant = False
+        elif isinstance(values, int):
+            self._values = [values]
+            self.constant = True
+        else:
             raise TypeError(f"Invalid input type ({type(values)})")
-        
-        # Convert to int (for example if the data comes from the testbench)
-        self._values = np.array(values).astype(int)
 
         if np.min(self._values) < 0 or np.max(self._values) > 1:
             raise ValueError(f"Invalid values range ({np.min(self._values)} -> {np.max(self._values)})")
@@ -61,6 +68,10 @@ class Bit(Signal):
     def fromActual(self, actualValues):
         return Bit(actualValues)
 
+    def __iadd__(self, x):
+        self._values = np.concatenate([self._values, np.array(x).astype(int)])
+        return self
+
 class BitVector(Signal):
     def __init__(self, N, values=None) -> None:
         """
@@ -68,11 +79,17 @@ class BitVector(Signal):
         """
         self.N = N
 
-        if not (isinstance(values, list) or isinstance(values, np.ndarray) or isinstance(values, tuple)):
+        if isinstance(values, list) or isinstance(values, np.ndarray) or isinstance(values, tuple):
+            # Convert to int (for example if the data comes from the testbench)
+            self._values = np.array(values).astype(int)
+            self.constant = False
+        elif isinstance(values, int):
+            self._values = [values]
+            self.constant = True
+        else:
             raise TypeError(f"Invalid input type ({type(values)})")
-        
-        # Convert to int (for example if the data comes from the testbench)
-        self._values = np.array(values).astype(int)
+
+    
 
     def valuesStr(self):
         return [str(x) for x in self._values]
@@ -86,15 +103,23 @@ class BitVector(Signal):
     def fromActual(self, actualValues):
         return BitVector(self.N, actualValues)
 
+    def __iadd__(self, x):
+        self._values = np.concatenate([self._values, np.array(x).astype(int)])
+        return self
+
 class Unsigned(Signal):
     def __init__(self, N, values=None) -> None:
         self.N = N
 
-        if not (isinstance(values, list) or isinstance(values, np.ndarray) or isinstance(values, tuple)):
+        if isinstance(values, list) or isinstance(values, np.ndarray) or isinstance(values, tuple):
+            # Convert to int (for example if the data comes from the testbench)
+            self._values = np.array(values).astype(int)
+            self.constant = False
+        elif isinstance(values, int):
+            self._values = [values]
+            self.constant = True
+        else:
             raise TypeError(f"Invalid input type ({type(values)})")
-        
-        # Convert to int (for example if the data comes from the testbench)
-        self._values = np.array(values).astype(int)
 
         if np.min(self._values) < 0 or np.max(self._values) > (2**N - 1):
             raise ValueError(f"Invalid values range ({np.min(self._values)} -> {np.max(self._values)})")
@@ -110,4 +135,8 @@ class Unsigned(Signal):
 
     def type(self) -> str:
         return f"Unsigned"
+
+    def __iadd__(self, x):
+        self._values = np.concatenate([self._values, np.array(x).astype(int)])
+        return self
     

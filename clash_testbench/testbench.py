@@ -37,7 +37,7 @@ class ExpectedActualPair:
             c.print(f"❌ {self._name}", style='bold red')
         
         if (not self.valid) or print_values:
-            arrays_str = np.array2string(np.stack([self._expected, self._actual]), suppress_small=True)
+            arrays_str = np.array2string(np.stack([self._expected, self._actual]), suppress_small=True, max_line_width=1e6)
             arrays_str = arrays_str.replace('[', ' ').replace(']', ' ')
             for line, label, style in zip(arrays_str.split('\n'), ['expected', 'actual'], ['cyan', 'dark_orange3']):
                 c.print(f"{label:<8s} ={line}", style=style, highlight=False)
@@ -55,13 +55,17 @@ class Testbench:
 
     def _add_lengths(self, signals : "dict[str, Signal]"):
         for signal_name, signal in signals.items():
-            self._lengths[signal_name] = len(signal)
+            if not signal.constant:
+                self._lengths[signal_name] = len(signal)
 
     def _check_lengths(self):
         g = groupby(list(self._lengths.values()))
-        if not (next(g, True) and not next(g, False)):
-            # The list isn't equal
+        length = next(g)[0]
+        if next(g, False):
+            # There one more group (multiple sizes)
             raise ValueError(f"All signals must be of the same length ({self._lengths})")
+
+        return length
 
     def setInputs(self, signals : "dict[str, Signal]"):
         """
@@ -72,12 +76,7 @@ class Testbench:
 
         # Check if all the signals are the same length, if they aren't print them
         self._add_lengths(signals)
-        self._check_lengths()
-        
-    
-        self.Inputs = ' '.join([f"(fromList [{','.join(s.valuesStr())}])" for s in signals.values()])
-
-        self.N = len(list(signals.values())[0].valuesStr())
+        self.N = self._check_lengths()        
 
     def setOutputs(self, signals : "dict[str, Signal]"):
         """
@@ -85,9 +84,20 @@ class Testbench:
         """
         # CHeck if all the signals are the same length
         self._add_lengths(signals)
-        self._check_lengths()
+        self.N = self._check_lengths()
 
         self.expectedOutputSignals = signals
+
+    def _fit_constant_signals(self):
+        """
+        Fit all constant signals to size N (create their values vector)
+        """
+
+        for l in [self.inputSignals.values(), self.expectedOutputSignals.values()]:
+            for s in l:
+                if s.constant:
+                    s.fit(self.N)
+
 
     def run(self):
 
@@ -95,7 +105,10 @@ class Testbench:
         # Load the two files
         #self._clashi.load(self._file)
         # Sample the testbench
-        testbenchOutput = self._clashi.sampleN(self._file, self.N, self.entity, self.Inputs)
+        self._fit_constant_signals()
+        input_list = ' '.join([f"(fromList [{','.join(s.valuesStr())}])" for s in self.inputSignals.values()])
+
+        testbenchOutput = self._clashi.sampleN(self._file, self.N, self.entity, input_list)
         
         self._signals = []
         self.actualOutputSignals = {}
@@ -104,7 +117,7 @@ class Testbench:
             actual = output_signal_class.fromActual(testbenchSignal)
             self.actualOutputSignals[output_signal_name] = actual
             # Create an expected-actual pair to analyse and compare the signals
-            self._signals.append(ExpectedActualPair(output_signal_name, output_signal_class._values, actual._values))
+            self._signals.append(ExpectedActualPair(output_signal_name, output_signal_class.valuesInt(), actual.valuesInt()))
 
 
     def __iter__(self):
