@@ -6,6 +6,7 @@
 #import pexpect
 from subprocess import PIPE, Popen
 import re
+import numpy as np
 
 _PROMPT = b"clashi>"
 class Clashi:
@@ -17,7 +18,7 @@ class Clashi:
             self._process = Popen(['clashi'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
         except FileNotFoundError as e:
-            print("Couldn't find clashi in the current environment")
+            raise RuntimeError("Couldn't find clashi in the current environment")
 
     def sampleN(self, file, N, entity, inputs):
         """
@@ -46,7 +47,8 @@ class Clashi:
 
             # Transpose [(a[0], b[0], ...), (a[1], b[1], ...)] -> [(a[0], a[1],...), ([b[0], b[1], ...)]
             # Convert the output tuples into each output signal
-            output = list(zip(*list_of_tuples))
+            output = np.transpose(list_of_tuples).tolist()
+            
         else:
             # It's only comma-separated values
             raw = ''.join([c for c in testbench_output if str.isdigit(c) or c == ','])

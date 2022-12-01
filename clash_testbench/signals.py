@@ -3,21 +3,77 @@
 
 import numpy as np
 
+from enum import Enum
+
+from random import randint
+
+class LogicLevel(Enum):
+    LOGIC = 0
+    UNKNOWN = 1
+    DONTCARE = 2
+
+
+LOGIC_LEVEL_MATCH = {
+    '0' : LogicLevel.LOGIC,
+    '1' : LogicLevel.LOGIC,
+    'x' : LogicLevel.UNKNOWN,
+    '-' : LogicLevel.UNKNOWN
+}
+# If it is int, it will always be (x, LogicLevel.Unknown)
+
+def _convertValues(wave, data = None):
+    """
+    Convert input values into the corresponding (value, logicLevel) pair 
+
+    Use cases :
+    0 -> [(0, logic)]
+    1 -> [(1, logic)]
+    [0, 1] -> [(0, logic), (1, logic)]
+    ['0', 'x', '1'] -> [(0, logic), (0, unknown), (1, logic)]
+    '0x1' -> [(0, logic), (0, unknown), (1, logic)]
+    '0' -> [(0, logic)]
+
+    Parameters
+    ----------
+    values : str or list[str] or int or list[int]
+    """
+
+    if data is None:
+        data = wave
+
+    if isinstance(wave, str):
+        # '*' or '******'
+        return [LOGIC_LEVEL_MATCH[x] for x in wave]
+    elif isinstance(wave, int):
+        # 123
+        return [(wave, LogicLevel.LOGIC)]
+    elif isinstance(wave, list):
+        if isinstance(wave[0], int):
+            # list[int]
+            return [(v, LogicLevel.LOGIC) for v in wave]
+        elif isinstance(wave[0], str):
+            # list[str]
+            return [LOGIC_LEVEL_MATCH[v] for v in wave]  
+        else:
+            raise ValueError(f"Invalid type : list[{type(wave[0])}]")
+    else:
+        raise ValueError(f"Invalid type : {type(wave)}")
+
 class Signal:
     def __init__(self) -> None:
         self._values = None
 
-    def valuesStr(self) -> list:
-        pass
-    
-    def valuesInt(self) -> list:
+    def valuesList(self) -> list:
+        """
+        List of values that, when printed, are readable by clash's sampleN function
+        """
         pass
             
     def type(self) -> str:
         pass
 
     def fit(self, N):
-        self._values = np.repeat(self._values[0], N)
+        self._values = N * [self._values[0]]
 
     def fromActual(self, actualValues):
         pass
@@ -27,50 +83,40 @@ class Signal:
     
     def __repr__(self) -> str:
         return self.__str__()
-    
-    def __len__(self):
-        return len(self.valuesInt())
-    
+
     def __iadd__(self, x):
-        pass
+        self._values += _convertValues(x)
+        return self
+
+    def __len__(self):
+        return len(self._values)
 
 class Bit(Signal):
-    def __init__(self, values : list) -> None:
+    def __init__(self, values) -> None:
         """
-        Bit Class
+        Bit Class 
+        values : list[str] or str
         """
 
-        if isinstance(values, list) or isinstance(values, np.ndarray) or isinstance(values, tuple):
-            # Convert to int (for example if the data comes from the testbench)
-            self._values = np.array(values).astype(int)
-            self.constant = False
-        elif isinstance(values, int):
-            self._values = [values]
-            self.constant = True
-        else:
-            raise TypeError(f"Invalid input type ({type(values)})")
+        self._values = []
+        if values is not None:
+            # Add them to the list
+            self += values
 
-        if np.min(self._values) < 0 or np.max(self._values) > 1:
-            raise ValueError(f"Invalid values range ({np.min(self._values)} -> {np.max(self._values)})")
-        
-    def valuesStr(self):
-        return [str(x) for x in self._values]
-    
-    def valuesInt(self):
-        return [int(x) for x in self._values]
+    def valuesList(self):
+        output = []
+        for i in self._values:
+            if i[1] == LogicLevel.LOGIC:
+                output.append(str(i[0]))
+            elif i[1] == LogicLevel.UNKNOWN:
+                output.append(str(randint(0,1)))
+        return output
 
     def type(self) -> str:
         return "Bit"
     
-    def test_method(self):
-        return "test"
-    
-    def fromActual(self, actualValues):
+    def fromActual(self, actualValues):        
         return Bit(actualValues)
-
-    def __iadd__(self, x):
-        self._values = np.concatenate([self._values, np.array(x).astype(int)])
-        return self
 
 class BitVector(Signal):
     def __init__(self, N, values=None) -> None:
@@ -79,23 +125,25 @@ class BitVector(Signal):
         """
         self.N = N
 
-        if isinstance(values, list) or isinstance(values, np.ndarray) or isinstance(values, tuple):
-            # Convert to int (for example if the data comes from the testbench)
-            self._values = np.array(values).astype(int)
-            self.constant = False
-        elif isinstance(values, int):
-            self._values = [values]
-            self.constant = True
-        else:
-            raise TypeError(f"Invalid input type ({type(values)})")
+        self._values = []
+        if values is not None:
+            # Add them to the list
+            self += values
+
+        values_only = [x[0] for x in self._values]
+        if np.min(values_only) < 0 or np.max(values_only) > (2**N - 1):
+            raise ValueError(f"Invalid values range ({np.min(self._values)} -> {np.max(self._values)})")
 
     
 
-    def valuesStr(self):
-        return [str(x) for x in self._values]
-
-    def valuesInt(self):
-        return [int(x) for x in self._values]
+    def valuesList(self):
+        output = []
+        for i in self._values:
+            if i[1] == LogicLevel.LOGIC:
+                output.append(str(i[0]))
+            elif i[1] == LogicLevel.UNKNOWN:
+                output.append(str(randint(0,2**self.N - 1)))
+        return output
     
     def type(self) -> str:
         return "BitVector"
@@ -103,32 +151,28 @@ class BitVector(Signal):
     def fromActual(self, actualValues):
         return BitVector(self.N, actualValues)
 
-    def __iadd__(self, x):
-        self._values = np.concatenate([self._values, np.array(x).astype(int)])
-        return self
 
 class Unsigned(Signal):
     def __init__(self, N, values=None) -> None:
         self.N = N
 
-        if isinstance(values, list) or isinstance(values, np.ndarray) or isinstance(values, tuple):
-            # Convert to int (for example if the data comes from the testbench)
-            self._values = np.array(values).astype(int)
-            self.constant = False
-        elif isinstance(values, int):
-            self._values = [values]
-            self.constant = True
-        else:
-            raise TypeError(f"Invalid input type ({type(values)})")
+        self._values = []
+        if values is not None:
+            # Add them to the list
+            self += values
 
-        if np.min(self._values) < 0 or np.max(self._values) > (2**N - 1):
+        values_only = [x[0] for x in self._values]
+        if np.min(values_only) < 0 or np.max(values_only) > (2**N - 1):
             raise ValueError(f"Invalid values range ({np.min(self._values)} -> {np.max(self._values)})")
         
-    def valuesStr(self):
-        return [str(x) for x in self._values]
-
-    def valuesInt(self):
-        return [int(x) for x in self._values]
+    def valuesList(self):
+        output = []
+        for i in self._values:
+            if i[1] == LogicLevel.LOGIC:
+                output.append(str(i[0]))
+            elif i[1] == LogicLevel.UNKNOWN:
+                output.append(str(randint(0,2**self.N - 1)))
+        return output
     
     def fromActual(self, actualValues):
         return Unsigned(self.N, actualValues)
@@ -136,7 +180,27 @@ class Unsigned(Signal):
     def type(self) -> str:
         return f"Unsigned"
 
-    def __iadd__(self, x):
-        self._values = np.concatenate([self._values, np.array(x).astype(int)])
-        return self
+class State(Signal):
+    def __init__(self, values=None) -> None:
+
+        self._values = []
+        if values is not None:
+            # Add them to the list
+            self += values
+
+        values_only = [x[0] for x in self._values]
+        
+    def valuesList(self):
+        output = []
+        for i in self._values:
+            if i[1] == LogicLevel.LOGIC:
+                output.append(str(i[0]))
+            elif i[1] == LogicLevel.UNKNOWN:
+                raise ValueError("Unknown is not supported for type \"State\"")
+        return output
     
+    def fromActual(self, actualValues):
+        return Unsigned(self.N, actualValues)
+
+    def type(self) -> str:
+        return f"State"
