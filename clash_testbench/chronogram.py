@@ -3,6 +3,7 @@
 
 from .testbench import Testbench
 import wavedrom
+from .wd import compress, uncompress, WD_WAVE, WD_DATA, WD_MAIN, WD_NAME
 from .signals import *
 from functools import reduce
 from os.path import basename
@@ -11,21 +12,15 @@ import json
 
 from json import dumps
 
-# Wavedrom keys
-WD_WAVE = 'wave'
-WD_DATA = 'data'
-WD_MAIN = 'signal'
-WD_NAME = 'name'
-
 # Clash-testbench keys
 CT_DIR = 'dir'
 CT_ORDER = 'order'
 CT_BITS = 'bits'
 CT_TYPE = 'type'
-CT_FROM = 'from'
 
 CT_DIR_IN = 'in'
-CT_DIR_OUT = 'out'
+CT_DIR_OUT_EXPECTED = 'out_exp'
+CT_DIR_OUT_ACTUAL = 'out_act'
 
 
 def _clock(N):
@@ -43,56 +38,6 @@ def _clock(N):
     output[WD_WAVE] = 'P' + '.' * (N-1)
 
     return output
-
-
-def compress(wave : str, data : list = None):
-        """
-        Compress a WD wave ['0', '0', '0', '1', '1', '1'] -> 0..1..
-        Data (if supplied) is also compressed
-        """
-        
-        current = ''
-        new_wave = ''
-        new_data = []
-
-        data_list = [None] * len(wave) if data is None else data
-
-        for w, d in zip(wave, data_list):
-            key = w if d is None else d
-            if key != current:
-                new_wave += w
-                new_data.append(d)
-            else:
-                new_wave += '.'
-            current = key
-        
-        if data is None:
-            return new_wave
-        else:
-            return new_wave, new_data
-
-def uncompress(wave : str, data : list = None):
-    """
-    Uncompress a WD wave '0..1..' -> ['0', '0', '0', '1', '1', '1']
-    Data (if supplied) is also uncompressed
-    """
-    new_wave = ''
-    new_data = []
-
-    data_list = [None] * len(wave) if data is None else data
-
-    for w, d in zip(wave, data_list):
-        if w == '.':
-            new_wave += new_wave[-1]
-            new_data.append(new_data[-1])
-        else:
-            new_wave += w
-            new_data.append(d)
-    
-    if data is None:
-        return new_wave
-    else:
-        return new_wave, new_data
 
 
 def _stimuliToWD(name : str, st : Signal):
@@ -113,11 +58,13 @@ def _stimuliToWD(name : str, st : Signal):
     if name is not None:
         output["name"] = name
     if st.type() == 'Bit':
-        output[WD_WAVE] = compress(''.join(['1' if x else '0' for x in st.valuesList()]))
+        output[WD_WAVE] = compress(st.valuesList())
     elif st.type() == 'BitVector':
-        output[WD_WAVE], output[WD_DATA] = compress('3'*len(st.valuesList()), st.valuesList())
+        output[WD_WAVE], output[WD_DATA] = compress(['3']*len(st.valuesList()), st.valuesList())
     elif st.type() == 'Unsigned':
-        output[WD_WAVE], output[WD_DATA] = compress('4'*len(st.valuesList()), st.valuesList())
+        output[WD_WAVE], output[WD_DATA] = compress(['4']*len(st.valuesList()), st.valuesList())
+    elif st.type() == 'State':
+        output[WD_WAVE], output[WD_DATA] = compress(['5']*len(st.valuesList()), st.valuesList())
 
     return output
 
@@ -176,50 +123,61 @@ class Chronogram:
                 # List of orders (for inputs [0] and outputs [1])
                 order_lists = [[],[]]
 
+                print(f"entries : {self.entries_list}")
+
                 for _, entry in self.entries_list:
-                    if (CT_DIR in entry) and (WD_NAME in entry) and (CT_TYPE in entry) and (CT_FROM not in entry):
+                    if (CT_DIR in entry) and (WD_NAME in entry) and (CT_TYPE in entry):
                         # The entry will be used (otherwise it will be ignored)
                         _dir = entry[CT_DIR]
                         isInput = _dir == CT_DIR_IN
-                        _name = entry[WD_NAME]
-                        _type = entry[CT_TYPE]
-                        order_list = order_lists[0 if isInput else 1]
+                        isExpectedOutput = _dir == CT_DIR_OUT_EXPECTED
                         
-                        # Check if the order is set
-                        if CT_ORDER not in entry:
-                            raise ValueError(f"Entry {_name} is missing 'order' property")
-
-                        order = entry[CT_ORDER]
-                        if order in order_list:
-                            raise ValueError(f"Duplicate of order property {order} for {'inputs' if isInput else 'outputs'}")
-                        # Add it to the list
-                        order_list.append(order)
-
-                        # Create each signal accordingly
-                        wave_data = uncompress(entry.get(WD_WAVE), entry.get(WD_DATA))
-                        if _type == 'Bit':
-                            signal = Bit(wave_data)
-                        elif _type == 'BitVector':
-                            signal = BitVector(entry[CT_BITS], wave_data[1])
-                        elif _type == 'Unsigned':
-                            signal = Unsigned(entry[CT_BITS], wave_data[1])
-                        elif _type == 'State':
-                            signal = State(wave_data[1])
-                        else:
-                            raise RuntimeError(f"Unsupported type \"{_type}\"")
-
-                        if isInput:
-                            unordered_inputs.append((order, _name, signal))
+                        # If it is anything else, do not use it
+                        if isInput or isExpectedOutput:
+                            _name = entry[WD_NAME]
+                            _type = entry[CT_TYPE]
+                            order_list = order_lists[0 if isInput else 1]
                             
-                        else:
-                            unordered_expectedOutputs.append((order, _name, signal))
+                            # Check if the order is set
+                            if CT_ORDER not in entry:
+                                raise ValueError(f"Entry {_name} is missing 'order' property")
+
+                            order = entry[CT_ORDER]
+                            if order in order_list:
+                                raise ValueError(f"Duplicate of order property {order} for {'inputs' if isInput else 'outputs'}")
+                            # Add it to the list
+                            order_list.append(order)
+
+                            # Create each signal accordingly
+                            wave_data = uncompress(entry.get(WD_WAVE), entry.get(WD_DATA))
+                            if _type == 'Bit':
+                                signal = Bit(wave_data)
+                            elif _type == 'BitVector':
+                                signal = BitVector(entry[CT_BITS], wave_data[1])
+                            elif _type == 'Unsigned':
+                                signal = Unsigned(entry[CT_BITS], wave_data[1])
+                            elif _type == 'State':
+                                signal = State(wave_data[1])
+                            else:
+                                raise RuntimeError(f"Unsupported type \"{_type}\"")
+                            signal.order = order
+
+                            if isInput:
+                                unordered_inputs.append((_name, signal))
+                                
+                            else:
+                                unordered_expectedOutputs.append((_name, signal))
+                            continue
 
                 # Sort inputs and save them
-                unordered_inputs.sort(key = lambda x : x[0])
-                self.inputs = {name : signal for (_, name, signal) in unordered_inputs}
+                
+                unordered_inputs.sort(key = lambda x : x[1].order)
+                self.inputs = {name : signal for (name, signal) in unordered_inputs}
                 # Sort expected outputs and save them
-                unordered_expectedOutputs.sort(key = lambda x : x[0])
-                self.expectedOutputs = {name : signal for (_, name, signal) in unordered_expectedOutputs}
+                print(f"before sort : {list(unordered_expectedOutputs)}")
+                unordered_expectedOutputs.sort(key = lambda x : x[1].order)
+                print(f"after sort : {list(unordered_expectedOutputs)}")
+                self.expectedOutputs = {name : signal for (name, signal) in unordered_expectedOutputs}
         else:
             raise ValueError("Invalid initializer type")
 
@@ -241,31 +199,28 @@ class Chronogram:
         # Replace all entries with CT_FROM key with their actual values
         json_content = self._input_json_content.copy()
 
+#        print(f"actual output signals = {actualOutputSignals}")
 
         for branch, entry in self.entries_list:
-            if CT_FROM in entry:
-                # This entry needs to be edited
-                _from = entry[CT_FROM]
-                # get the name of the expected output
-                for _, _entry in self.entries_list:
-                    if (WD_NAME in _entry) and (CT_FROM not in _entry) and (_entry[WD_NAME] == _from):
-                        # Found it ! get its name
-                        expectedOutputName = _entry[WD_NAME]
-                        #order = int(_entry[CT_ORDER])
-                        break
-                else:
-                    raise ValueError(f"Couldn't find associated expected output for \"{_from}\"")
+            if (CT_ORDER in entry) and (CT_DIR in entry) and (entry[CT_DIR] == CT_DIR_OUT_ACTUAL):
 
+                #indices = list(range(len(self._tb.actualOutputSignals)))
+
+                _order = entry[CT_ORDER]
                 # Now we can match edit the json entry (by locating with the branch) and putting the corresponding signal (found with "from")
                 dest = json_content[WD_MAIN]
                 # Traverse the branch backward and keep the last index (to keep reference to the main list), which is branch[-1]
                 for b in branch[:-1]:
                     dest = dest[b]
 
-                for key, val in _stimuliToWD(None, self._tb.actualOutputSignals[expectedOutputName]).items():
-                    dest[branch[-1]][key] = val
+                # find the right output signal
+                for actual in self._tb.actualOutputSignals.values():
+                    if actual.order == _order:
+                        # Found the right one
+                        for key, val in _stimuliToWD(None, actual).items():
+                            dest[branch[-1]][key] = val
 
-
+                
 
         return json_content
 

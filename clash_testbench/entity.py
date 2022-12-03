@@ -17,7 +17,7 @@ class Entity:
         self._file = hs_file
         self._entity = entity
 
-    def test(self, stimulis : dict, outputs : dict) -> Testbench:
+    def test(self, stimulis : dict = None, outputs : dict = None) -> Testbench:
         """
         Test the entity with a list of stimulis
 
@@ -39,8 +39,10 @@ class Entity:
 
         # Generate testbench
         tb = Testbench(self._file, self._entity)
-        tb.setInputs(stimulis)
-        tb.setOutputs(outputs)
+        if stimulis is not None:
+            tb.setInputs(stimulis)
+        if outputs is not None:
+            tb.setOutputs(outputs)
 
         tb.run()
 

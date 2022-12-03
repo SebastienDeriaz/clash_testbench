@@ -4,7 +4,7 @@
 
 #from subprocess import Popen, PIPE, call
 #import pexpect
-from subprocess import PIPE, Popen
+from subprocess import PIPE, Popen, TimeoutExpired
 import re
 import numpy as np
 
@@ -29,8 +29,15 @@ class Clashi:
         # Run the testbench command
         command = f'sampleN @System {N} ({entity} {inputs})\n'
 
+        #print(load_file_command)
+        #print(command)
+
         # Everything is done at once because the communication method can only be called once
-        stdout, stderr = self._process.communicate((load_file_command + command).encode('utf-8'))
+        try:
+            stdout, stderr = self._process.communicate((load_file_command + command).encode('utf-8'), timeout=20.0)
+        except TimeoutExpired:
+            self._process.kill()
+            raise TimeoutError("Clashi command timeout")
 
         if stderr:
             # An error occured

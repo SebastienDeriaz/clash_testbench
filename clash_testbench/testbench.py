@@ -75,6 +75,8 @@ class Testbench:
         self.entity = entity
         self.actualOutputSignals = None
         self._lengths = {}
+        self.inputSignals = {}
+        self.expectedOutputSignals = {}
 
     def _add_lengths(self, signals : "dict[str, Signal]"):
         for signal_name, signal in signals.items():
@@ -99,6 +101,9 @@ class Testbench:
         TAB = 4*' '
         self.inputSignals = signals
 
+        if signals == {}:
+            raise ValueError("Inputs cannot be empty")
+
         # Check if all the signals are the same length, if they aren't print them
         self._add_lengths(signals)
         self.N = self._check_lengths()
@@ -110,6 +115,9 @@ class Testbench:
         # CHeck if all the signals are the same length
         self._add_lengths(signals)
         self.N = self._check_lengths()
+
+        if signals == {}:
+            raise ValueError("Inputs cannot be empty")
 
         self.expectedOutputSignals = signals
 
@@ -132,19 +140,33 @@ class Testbench:
         # Sample the testbench
         self._fit_constant_signals()
         input_list = ' '.join([f"(fromList [{','.join(s.valuesList())}])" for s in self.inputSignals.values()])
+        print(f"Running testbench with {len(input_list)} input(s) and {len(self.expectedOutputSignals)} output(s)")
 
         testbenchOutput = self._clashi.sampleN(self._file, self.N, self.entity, input_list)
-
-        print(testbenchOutput)
         
         self._signals = []
         self.actualOutputSignals = {}
-        for (output_signal_name, output_signal_class), testbenchSignal in zip(self.expectedOutputSignals.items(), testbenchOutput): 
-            # Recreate the same class as expected (to parse the data)
-            actual = output_signal_class.fromActual(testbenchSignal)
-            self.actualOutputSignals[output_signal_name] = actual
-            # Create an expected-actual pair to analyse and compare the signals
-            self._signals.append(ExpectedActualPair(output_signal_name, output_signal_class, actual))
+        
+        #for (output_signal_name, output_signal_class), testbenchSignal in zip(self.expectedOutputSignals.items(), testbenchOutput): 
+        for (output_signal_name, output_signal_class) in self.expectedOutputSignals.items():
+            # Take the corresponding output of the testbench
+            _order = output_signal_class.order
+            if(_order < len(testbenchOutput)):
+                testbenchSignal = testbenchOutput[_order]
+                # This is the right actual 
+
+                # Recreate the same class as expected (to parse the data)
+                actual = output_signal_class.fromActual(testbenchSignal)
+                self.actualOutputSignals[output_signal_name] = actual
+                # Create an expected-actual pair to analyse and compare the signals
+                self._signals.append(ExpectedActualPair(output_signal_name, output_signal_class, actual))
+            else:
+                raise ValueError(f"Testbench doesn't produce enough output signal for index {_order} ({output_signal_name})")
+                    
+
+        print(f"{self.actualOutputSignals = }")
+
+
 
 
     def __iter__(self):
