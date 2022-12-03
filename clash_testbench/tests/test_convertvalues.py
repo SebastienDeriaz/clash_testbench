@@ -1,5 +1,5 @@
 from .convertvalues import convertValues
-from .logic import LogicLevel as LL
+from ._logic import LogicLevel as LL
 
 INPUT_OUTPUT = [
         ('01x', [(0, LL.LOGIC), (1, LL.LOGIC) , (None, LL.UNKNOWN)]),

@@ -1,265 +1,503 @@
-# Chronogram class
-# Sébastien Deriaz - 26.11.2022
-
-from .testbench import Testbench
-import wavedrom
-from .wd import compress, uncompress, WD_WAVE, WD_DATA, WD_MAIN, WD_NAME
-from .signals import *
-from functools import reduce
-from os.path import basename
+from .logic import *
 import json
+import wavedrom
+
+WD_KEY_NAME = 'name'
+WD_KEY_WAVE = 'wave'
+WD_KEY_DATA = 'data'
+WD_KEY_MAIN = 'signal'
 
 
-from json import dumps
+WD_LOGIC_HIGH = '1'
+WD_LOGIC_LOW = '0'
+WD_LOGIC_UNKNOWN = 'x'
+WD_DATA_SYMBOLS = ['2', '3', '4', '5', '6', '7', '8', '9']
 
-# Clash-testbench keys
-CT_DIR = 'dir'
-CT_ORDER = 'order'
-CT_BITS = 'bits'
-CT_TYPE = 'type'
+WD_SYMBOL_LOGIC = {
+    '0': Level.LOW,
+    '1': Level.HIGH,
+    'x': Level.UNKNOWN
+}
 
-CT_DIR_IN = 'in'
-CT_DIR_OUT_EXPECTED = 'out_exp'
-CT_DIR_OUT_ACTUAL = 'out_act'
+WD_LOGIC_SYMBOL = {
+    Level.LOW: '0',
+    Level.HIGH: '1',
+    Level.UNKNOWN: 'x',
+    0: '0',
+    1: '1'
+}
 
 
-def _clock(N):
+def isClock(entry: dict):
     """
-    Return a clock wave
+    Check if an entry has a clock wave
 
     Parameters
     ----------
-    N : int
-        The number of clock cycles
-    """
-
-    output = {}
-
-    output[WD_WAVE] = 'P' + '.' * (N-1)
-
-    return output
-
-
-def _stimuliToWD(name : str, st : Signal):
-    """
-    Convert a stimuli to a wavedrom entry
-    
-    Parameters
-    ----------
-    st : Stimuli
+    entry : dict
 
     Returns
     -------
-    output : dict
-        Dictionary containing all the keys and values for the wavedrom entry
+    output : bool
+    """
+    if WD_KEY_WAVE in entry:
+        if 'p' in entry[WD_KEY_WAVE] or 'P' in entry[WD_KEY_WAVE]:
+            return True
+    return False
+
+
+def symbolDataToSample(symbol: str, data=None) -> Sample:
+    """
+    Convert a symbol (+data) to a sample
+
+    Parameters
+    ----------
+    symbol : str
+        a wavedrom symbol
+    data : int or str
+        An optional data value for this symbol
+    """
+    if symbol in WD_SYMBOL_LOGIC:
+        # Data doesn't matter
+        return Sample(WD_SYMBOL_LOGIC[symbol])
+    elif symbol in WD_DATA_SYMBOLS:
+        if data is None:
+            raise ValueError(
+                f"Sample's symbol '{symbol}' cannot be linked with None data")
+        return Sample(data, colorIndex=WD_DATA_SYMBOLS.index(symbol))
+
+
+def sampleToSymbolData(sample: Sample):
+    """
+    Convert a sample to symbol (+ data)
+
+    Parameters
+    ----------
+    sample : Sample
+
+    Returns
+    -------
+    wave : str
+    data : str or int
+    """
+    wave, data = None, None
+
+    if sample._value in WD_LOGIC_SYMBOL:
+        # It is a logic level
+        wave = WD_LOGIC_SYMBOL[sample._value]
+    elif isinstance(sample._value, str) or isinstance(sample._value, int):
+        # int 0 and 1 are taken care of above
+        wave = WD_DATA_SYMBOLS[sample.colorIndex]
+        data = sample._value
+    else:
+        raise ValueError(
+            f"Cannot convert sample value of type {type(sample._value)}")
+
+    return wave, data
+
+
+def compress(wave: list, data: list = None):
+    """
+    Compress a WD wave ['0', '0', '0', '1', '1', '1'] -> 0..1..
+    Data (if supplied) is also compressed
     """
 
-    output = {}
-    if name is not None:
-        output["name"] = name
-    if st.type() == 'Bit':
-        output[WD_WAVE] = compress(st.valuesList())
-    elif st.type() == 'BitVector':
-        output[WD_WAVE], output[WD_DATA] = compress(['3']*len(st.valuesList()), st.valuesList())
-    elif st.type() == 'Unsigned':
-        output[WD_WAVE], output[WD_DATA] = compress(['4']*len(st.valuesList()), st.valuesList())
-    elif st.type() == 'State':
-        output[WD_WAVE], output[WD_DATA] = compress(['5']*len(st.valuesList()), st.valuesList())
+    current_w = ''
+    current_d = ''
+    new_wave = ''
+    new_data = []
 
-    return output
+    data_list = [None] * len(wave) if data is None else data
+
+    for w, d in zip(wave, data_list):
+        if w != current_w or (d != None and d != current_d):
+            new_wave += w
+            if w in WD_DATA_SYMBOLS:
+                new_data.append(d)
+        else:
+            new_wave += '.'
+        current_w = w
+        current_d = d
+
+    #print(f"{wave}, {data} -> {new_wave}, {new_data}")
+    if data is None:
+        return new_wave
+    else:
+        return new_wave, new_data
 
 
+def uncompress(wave: str, data: list = None):
+    """
+    Uncompress a WD wave
+    '0..1..' -> ['0', '0', '0', '1', '1', '1']
 
-def _listWDNodes(entry, remove_first=False, branch=[]):    
+    '3.x3' + ['A', 'B'] -> '33x3' + ['A', 'A', None, 'B']
+    Data (if supplied) is also uncompressed
+    """
+    new_wave = []
+    new_data = []
+
+    if data is not None:
+        data_iter = iter(data)
+
+    #data_list = [None] * len(wave) if data is None else data
+    for i, w in enumerate(wave):
+        if w == '.':
+            if i == 0:
+                raise ValueError("Signal cannot start with '.'")
+            new_wave.append(new_wave[-1])
+            new_data.append(new_data[-1])
+        else:
+            new_wave.append(w)
+            if (w == 'x') or (data is None) or (w in [WD_LOGIC_HIGH, WD_LOGIC_LOW]):
+                new_data.append(None)
+            elif w in WD_DATA_SYMBOLS:
+                # This is a data frame
+                try:
+                    new_data.append(next(data_iter))
+                except StopIteration:
+                    raise ValueError(f"Mismatch in wave and data length : {wave}, {data}")
+            else:
+                raise ValueError(f"Couldn't parse symbol : '{w}'")
+
+    #print(f"{wave}, {data} -> {new_wave}, {new_data}")
+
+    if data is None:
+        return new_wave
+    else:
+        return new_wave, new_data
+
+
+def entryToSignal(entry: dict):
+    """
+    Convert an entry (wave, data and name)
+
+    Parameters
+    ----------
+    entry : dict
+        The entry must contain the following keys : wave, name
+        The following keys are optional : data
+
+    Returns
+    -------
+    signal : Signal
+    """
+    # 1) Check if the entry has the necessary keys
+    if WD_KEY_NAME not in entry:
+        raise ValueError(f"Entry {entry} missing key '{WD_KEY_NAME}")
+    if WD_KEY_WAVE not in entry:
+        raise ValueError(f"Entry {entry} missing key '{WD_KEY_WAVE}")
+
+    data, wave, name = entry.get(WD_KEY_DATA), entry.get(
+        WD_KEY_WAVE), entry.get(WD_KEY_NAME)
+    # 2) Uncompress the signal (remove the '.')
+    if data is None:
+        uwave = uncompress(wave)
+        udata = [None] * len(uwave)
+    else:
+        uwave, udata = uncompress(wave, data)
+
+    # 3) Create the signal
+    signal = Signal(name)
+
+    for w, d in zip(uwave, udata):
+        signal += symbolDataToSample(w, d)
+
+    return signal
+
+
+def signalToEntry(signal: Signal) -> dict:
+    """
+    Convert a signal to an entry (data, wave, name)
+
+    Parameters
+    ----------
+    signal : Signal
+
+    Returns
+    -------
+    entry : dict
+    """
+    entry = {}
+    # 1) Set the name
+    entry[WD_KEY_NAME] = signal.name
+    uwave, udata = [], []
+
+    # 2) Add the samples
+
+    for sample in signal:
+        w, d = sampleToSymbolData(sample)
+        uwave.append(w)
+        udata.append(d)
+
+    entry[WD_KEY_WAVE], entry[WD_KEY_DATA] = compress(uwave, udata)
+
+    return entry
+
+
+def _listWDEntries(entry, remove_first=False, branch=[]):
     if isinstance(entry, list):
         # It's a group
         output = []
         # Remove the first value (the header)
         offset = 1 if remove_first else 0
         for i, e in enumerate(entry[offset:]):
-            n = _listWDNodes(e, True, branch + [i + offset])
+            n = _listWDEntries(e, True, branch + [i + offset])
             output += n if isinstance(n, list) else [n]
     else:
         output = (branch, entry)
     return output
 
 
-
-
-
 class Chronogram:
-    def __init__(self, initializer):
+    def __init__(self, file: str = None):
         """
-        Chronogram class
-        
+        Create a new chronogram
+
         Parameters
         ----------
-        initializer : str or Testbench
-            - str : Path to chrogogram file (generate from chronogram)
-            - Testbench : Generate from testbench
+        file : str
+            The file from which the chronogram is loaded
+            if None (default), a new chronogram will be made
         """
-        self.inputs = {}
-        self.expectedOutputs = {}
 
+        # 1) Read the json file
+        with open(file, 'r', encoding='utf-8') as f:
+            self._json_content = json.load(f)
 
-        if isinstance(initializer, Testbench):
-            self._file = None
-            self._tb = initializer
-        elif isinstance(initializer, str):
-            self._tb = None
-            self._file = initializer
+            # 1) List all of the entries and create a tree of their position based on their names
+            #    note : no two entries can have the same name
+            self.updateEntriesTree()
 
-            unordered_inputs = []
-            unordered_expectedOutputs = []
+        self._templates = None
 
-            with open(self._file, 'r', encoding='utf-8') as f:
-                self._input_json_content = json.load(f)
+        self._signals = self.getSignals()
 
-                # 1) remove groups
-                self.entries_list = _listWDNodes(self._input_json_content[WD_MAIN])
+    def updateEntriesTree(self):
+        entries = _listWDEntries(self._json_content[WD_KEY_MAIN])
+        self._entriesTree = {}
+        for branch, entry in entries:
+            # Check if the entry is empty and if it has a name
+            if entry:
+                if WD_KEY_NAME in entry:
+                    _name = entry[WD_KEY_NAME]
+                    # Check if another entry has the same name (not allowed)
+                    if _name in self._entriesTree:
+                        raise ValueError(f"Duplicate of name {_name}")
 
-                # 2) List inputs and expected outputs
+                    # If not, it's all good we can add it
+                    self._entriesTree[_name] = branch
+                else:
+                    # This entry is ignored
+                    raise ValueError(f"Entry {entry} does not have a name")
 
-                # List of orders (for inputs [0] and outputs [1])
-                order_lists = [[],[]]
+    def _WDGetEntry(self, branch: list) -> dict:
+        """
+        Return an entry from the WD description and a branch
 
-                print(f"entries : {self.entries_list}")
+        Parameters
+        ----------
+        branch : list
+            List of indices to get to the entry
 
-                for _, entry in self.entries_list:
-                    if (CT_DIR in entry) and (WD_NAME in entry) and (CT_TYPE in entry):
-                        # The entry will be used (otherwise it will be ignored)
-                        _dir = entry[CT_DIR]
-                        isInput = _dir == CT_DIR_IN
-                        isExpectedOutput = _dir == CT_DIR_OUT_EXPECTED
-                        
-                        # If it is anything else, do not use it
-                        if isInput or isExpectedOutput:
-                            _name = entry[WD_NAME]
-                            _type = entry[CT_TYPE]
-                            order_list = order_lists[0 if isInput else 1]
-                            
-                            # Check if the order is set
-                            if CT_ORDER not in entry:
-                                raise ValueError(f"Entry {_name} is missing 'order' property")
+        Returns
+        -------
+        entry : dict
+        """
+        entry = self._json_content[WD_KEY_MAIN]
+        for b in branch:
+            entry = entry[b]
 
-                            order = entry[CT_ORDER]
-                            if order in order_list:
-                                raise ValueError(f"Duplicate of order property {order} for {'inputs' if isInput else 'outputs'}")
-                            # Add it to the list
-                            order_list.append(order)
+        return entry
 
-                            # Create each signal accordingly
-                            wave_data = uncompress(entry.get(WD_WAVE), entry.get(WD_DATA))
-                            if _type == 'Bit':
-                                signal = Bit(wave_data)
-                            elif _type == 'BitVector':
-                                signal = BitVector(entry[CT_BITS], wave_data[1])
-                            elif _type == 'Unsigned':
-                                signal = Unsigned(entry[CT_BITS], wave_data[1])
-                            elif _type == 'State':
-                                signal = State(wave_data[1])
-                            else:
-                                raise RuntimeError(f"Unsupported type \"{_type}\"")
-                            signal.order = order
+    def _WDSetEntry(self, entry: dict, branch: list):
+        """
+        Set an entry inside the WD description
 
-                            if isInput:
-                                unordered_inputs.append((_name, signal))
-                                
-                            else:
-                                unordered_expectedOutputs.append((_name, signal))
-                            continue
+        Parameters
+        ----------
+        entry : dict
+            The entry to replace
+        branch : list
+            List of indices to get to the entry
+        """
+        top = self._json_content[WD_KEY_MAIN]
+        for b in branch[:-1]:
+            # Go into the branch but to keep the last one for mutability
+            top = top[b]
 
-                # Sort inputs and save them
-                
-                unordered_inputs.sort(key = lambda x : x[1].order)
-                self.inputs = {name : signal for (name, signal) in unordered_inputs}
-                # Sort expected outputs and save them
-                print(f"before sort : {list(unordered_expectedOutputs)}")
-                unordered_expectedOutputs.sort(key = lambda x : x[1].order)
-                print(f"after sort : {list(unordered_expectedOutputs)}")
-                self.expectedOutputs = {name : signal for (name, signal) in unordered_expectedOutputs}
+        top[branch[-1]] = entry
+
+    def _WDAddEntry(self, entry: dict):
+        """
+        Add an entry to the list of entries
+
+        Parameters
+        ----------
+        entry : dict
+        """
+        self._json_content[WD_KEY_MAIN].append(entry)
+
+    def getSignals(self, names: "list[str]" = None) -> dict:
+        """
+        Get a list of signals
+
+        Parameters
+        ----------
+        name : list
+            List of signals names. If None, all of the signals are returned
+
+        Returns
+        -------
+        signals : dict
+            List of signals
+        """
+
+        output = {}
+        if names is None:
+            for name, branch in self._entriesTree.items():
+                entry = self._WDGetEntry(branch)
+                if WD_KEY_WAVE in entry and not isClock(entry):
+                    output[name] = entryToSignal(entry)
         else:
-            raise ValueError("Invalid initializer type")
+            for n in names:
+                if n not in self._entriesTree:
+                    raise ValueError(
+                        f"name {n} doesn't exist inside this chronogram")
+                entry = self._WDGetEntry(self._entriesTree[n])
+                output[n] = entryToSignal(entry)
 
-    def loadReport(self, report):
+        return output
+
+    def setSignals(self, signals: dict):
         """
-        Load the report
+        Set a list of signals
+
+        Parameters
+        ----------
+        signals : dict
+            List of signals
         """
 
-        self._tb = report
+        for _name, signal in signals.items():
+            # Update the name of the signal, just to be sure
+            signal.name = _name
 
-    def _fromChronogram(self):
+            if _name in self._entriesTree:
+                # Edit the entry
+                self._WDSetEntry(signalToEntry(signal),
+                                 self._entriesTree[_name])
+            else:
+                # Create a new one
+                self._WDAddEntry(signalToEntry(signal))
+
+    def applyTemplate(self, entry: dict, entry_template: dict) -> dict:
         """
-        Edit the given chronogram and output its new json definition
+        Apply a template to an entry
+
+        Parameters
+        ----------
+        entry : dict
+        entry_template : dict
+
+        Returns
+        -------
+        new_entry : dict
+
         """
-        # Check if the report was loaded
-        if self._tb is None:
-            raise ValueError("Testbench (report) wasn't loaded, please use chronogram.loadReport(report)")
+        new_entry = entry
+        if WD_KEY_DATA not in entry:
+            raise RuntimeError(
+                "Cannot apply template to an entry that doesn't contain a data field")
 
-        # Replace all entries with CT_FROM key with their actual values
-        json_content = self._input_json_content.copy()
+        uwave, udata = uncompress(
+            entry.get(WD_KEY_WAVE), entry.get(WD_KEY_DATA))
+        uwavet, udatat = uncompress(entry_template.get(
+            WD_KEY_WAVE), entry_template.get(WD_KEY_DATA))
+        if len(uwave) != len(uwavet):
+            raise RuntimeError(
+                f"Length of entry and template entry do not match ! ({len(uwave)})/({len(uwavet)})")
 
-#        print(f"actual output signals = {actualOutputSignals}")
-
-        for branch, entry in self.entries_list:
-            if (CT_ORDER in entry) and (CT_DIR in entry) and (entry[CT_DIR] == CT_DIR_OUT_ACTUAL):
-
-                #indices = list(range(len(self._tb.actualOutputSignals)))
-
-                _order = entry[CT_ORDER]
-                # Now we can match edit the json entry (by locating with the branch) and putting the corresponding signal (found with "from")
-                dest = json_content[WD_MAIN]
-                # Traverse the branch backward and keep the last index (to keep reference to the main list), which is branch[-1]
-                for b in branch[:-1]:
-                    dest = dest[b]
-
-                # find the right output signal
-                for actual in self._tb.actualOutputSignals.values():
-                    if actual.order == _order:
-                        # Found the right one
-                        for key, val in _stimuliToWD(None, actual).items():
-                            dest[branch[-1]][key] = val
-
-                
-
-        return json_content
-
-
-
-    def _fromTestbench(self, title):
-        json_content = {}
-        chronogram_length = len(list(self._tb.inputSignals.values())[0])
-        json_content["head"] = {
-            'text' : title,
-            'tick' : 0,
-            'every' : 1
-        }
-        json_content["signal"] = []
-        json_content["signal"].append(_clock(chronogram_length))
-        json_content["signal"].append(['inputs', *[_stimuliToWD(*t) for t in self._tb.inputSignals.items()]])
-        json_content["signal"].append({})
-        json_content["signal"].append(['out (th)', *[_stimuliToWD(*t) for t in self._tb.expectedOutputSignals.items()]])
-        json_content["signal"].append({})
-        if self._tb.actualOutputSignals is not None:
-            json_content["signal"].append(['out', *[_stimuliToWD(*t) for t in self._tb.actualOutputSignals.items()]])
-            json_content["signal"].append({})
-
-        return json_content
-
-    def saveSVG(self, svgFile : str):
-        """
-        Save the chronogram as an svg file
+        uwaven = uwave.copy()
+        udatan = udata.copy()
         
+        for i, (w, d, wt, dt) in enumerate(zip(uwave, udata, uwavet, udatat)):
+            if w != wt:
+                # There's something to change
+                if wt in WD_DATA_SYMBOLS:
+                    # Convert to data
+                    uwaven[i] = wt
+                    if w in [WD_LOGIC_LOW, WD_LOGIC_HIGH]:
+                        # The original is '1' and we want a 3 + ['1'] for example
+                        # Insert the value inside data
+                        udatan[i] = w
+                        pass
+
+                    else:
+                        # Only the colors needs to be changed
+                        pass
+        
+        waven, datan = compress(uwaven, udatan)
+
+        new_entry[WD_KEY_DATA] = datan
+        new_entry[WD_KEY_WAVE] = waven
+
+        return new_entry
+
+    def setTemplates(self, templates: dict):
         """
+        Set templates
 
-        if self._file is None:
-            # From testbench
-            json_content = self._fromTestbench(basename(svgFile))
-        else:
-            json_content = self._fromChronogram()
+        Parameters
+        ----------
+        templates : dict
+            in the form {signal_name : template_name, ...}
+        """
+        self._templates = templates
 
+    def applyTemplates(self):
+        """
+        Apply templates to all the signals
+        """
+        if self._templates is not None:
+            for _name, branch in self._entriesTree.items():
+                if _name in self._templates:
+                    # This entry needs to be updated
+                    template = self._WDGetEntry(
+                        self._entriesTree[self._templates[_name]])
+                    entry = self._WDGetEntry(self._entriesTree[_name])
+                    self._WDSetEntry(self.applyTemplate(
+                        entry, template), branch)
 
+    def saveJson(self, output_file: str):
+        """
+        Outputs the chronogram to a .json file
 
-        svg = wavedrom.render(str(json_content))
-        svg.saveas(svgFile)
+        Parameters
+        ----------
+        output_file : str
+            Output file path
+        """
+        self.updateEntriesTree()
+        self.applyTemplates()
+
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(self._json_content, f, indent=2)
+
+    def saveSVG(self, output_file: str):
+        """
+        Output the chronogram to an SVG file
+
+        Parameters
+        ----------
+        output_file : str
+            Output file path
+        """
+        self.updateEntriesTree()
+        self.applyTemplates()
+
+        svg = wavedrom.render(str(self._json_content))
+        svg.saveas(output_file)
     
+    def __getitem__(self, key):
+        return self._signals[key]

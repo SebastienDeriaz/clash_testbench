@@ -3,7 +3,7 @@ from sys import path
 path.append('../clash')
 
 
-from ..chronogram import Chronogram
+from .._chronogram import Chronogram
 from ..testbench import Testbench
 from ..signals import *
 
