@@ -20,6 +20,32 @@ class Clashi:
         except FileNotFoundError as e:
             raise RuntimeError("Couldn't find clashi in the current environment")
 
+    def _runCommand(self, command, timeout):
+        """
+        Run a clashi command
+
+        Parameters
+        ----------
+        command : bytes / bytearray
+        timeout : int or float
+
+        Returns
+        -------
+        stdout : bytes
+        stderr : bytes
+        """
+        # Everything is done at once because the communication method can only be called once
+        try:
+            try:
+                stdout, stderr = self._process.communicate(command, timeout=20.0)
+            except TimeoutExpired:
+                self._process.kill()
+                raise TimeoutError("Clashi command timeout")
+        except KeyboardInterrupt as e:
+            self._process.kill()
+            raise e
+
+
     def sampleN(self, file, N, entity, inputs):
         """
         run SampleN on a specified module
@@ -32,17 +58,11 @@ class Clashi:
         #print(load_file_command)
         #print(command)
 
-        # Everything is done at once because the communication method can only be called once
-        try:
-            stdout, stderr = self._process.communicate((load_file_command + command).encode('utf-8'), timeout=20.0)
-        except TimeoutExpired:
-            self._process.kill()
-            raise TimeoutError("Clashi command timeout")
+        stdout, stderr = self._runCommand((load_file_command + command).encode('utf-8'))
 
         if stderr:
             # An error occured
             raise RuntimeError(stderr.decode('utf-8'))
-
         # The testbench output is located one line before the "leaving ghci" message
         testbench_output = (stdout.split(_PROMPT)[-2]).decode('utf-8')
         # Capture the groups
@@ -64,3 +84,39 @@ class Clashi:
 
         # output is a list of tuples (with each value corresponding to an output)
         return output
+    
+    def testFunction(self, file : str, entity : str, inputs : list[str]):
+        """
+        Test a function with the given arguments
+
+        Parameters
+        ----------
+        file : str
+            Path to the .hs file
+        entity : str
+            Name of the entity / function
+        inputs : list[str]
+            List of inputs (str)
+
+        Returns
+        -------
+        output : str
+        """
+        # Load the file
+        load_file_command = f':l {file}\n'
+        # Run the testbench command
+        command = f'{entity} {" ".join(inputs)}\n'
+
+        # Everything is done at once because the communication method can only be called once
+        stdout, stderr = self._runCommand(load_file_command + command)
+
+        if stderr:
+            # An error occured
+            raise RuntimeError(stderr.decode('utf-8'))
+
+        print(f"testFunction output : {stdout}")
+
+        return stdout
+
+        
+

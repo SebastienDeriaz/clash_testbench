@@ -2,7 +2,7 @@ from sys import path
 path.append('.')
 
 from clash_testbench import Chronogram
-from clash_testbench.chronogram import compress, uncompress, signalToEntry
+from clash_testbench.chronogram import _compress, _uncompress, _signalToEntry
 
 from os.path import dirname, join
 
@@ -15,9 +15,9 @@ def test_compress():
 
     for inp, exp in INPUT_OUTPUT:
         if isinstance(inp, tuple):
-            act = compress(*inp)
+            act = _compress(*inp)
         else:
-            act = compress(inp)
+            act = _compress(inp)
         assert act == exp, f"Fail : {inp} -> {act} instead of {exp}"
 
 
@@ -32,9 +32,9 @@ def test_uncompress():
 
     for inp, exp in INPUT_OUTPUT:
         if isinstance(inp, tuple):
-            act = uncompress(*inp)
+            act = _uncompress(*inp)
         else:
-            act = uncompress(inp)
+            act = _uncompress(inp)
         assert act == exp, f"Fail : {inp} -> {act} instead of {exp}"
 
 

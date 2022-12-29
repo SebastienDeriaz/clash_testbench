@@ -5,13 +5,17 @@ import numpy as np
 from rich.console import Console
 from rich.text import Text
 
+from typing import Iterator
+
 #from .signals import Signal, LogicLevel
 from .logic import Signal, Level
 from .clashi import Clashi
 
 from itertools import groupby
 
-class ExpectedActualPair:
+from os.path import exists
+
+class SignalChecker:
     def __init__(self, expectedValues : Signal, actualValues : Signal):
         """
         
@@ -22,9 +26,25 @@ class ExpectedActualPair:
         """
         self._expected : Signal = expectedValues
         self._actual : Signal = actualValues
-        self.valid = self.evalValid()
+        self._isChecked = self._expected is not None
+        if self._isChecked:
+            self._isValid = self._evalValid()
+        else:
+            self._isValid = False
 
-    def evalValid(self):
+    def isValid(self):
+        return self._isValid
+
+    def isChecked(self):
+        return self._isChecked
+
+    def message(self):
+        if self._expected:
+            return f"Signal '{self._actual.name}' doesn't match '{self._expected.name}'"
+        else:
+            return f"Signal '{self._actual.name}' isn't checked"
+
+    def _evalValid(self):
         HIGHS = ['1', 1, Level.HIGH]
         LOWS = ['0', 0, Level.LOW]
 
@@ -47,6 +67,18 @@ class ExpectedActualPair:
 
     def print(self, print_values = False):
         """
+        Prints information about the signal
+        - If it is checked (with an expected signal), a pass-fail report will be printed
+        - otherwise, a simple signal list will be printed
+        """
+
+        if self._isChecked:
+            self.printPassFail(print_values)
+        else:
+            self.printSignal(print_values)
+
+    def printPassFail(self, print_values):
+        """
         Print pass/fail of actual signal compared to expected signal.
 
         Parameters
@@ -55,33 +87,48 @@ class ExpectedActualPair:
             Force print signal values even when the test passes
         """
         c = Console()
-        # TODO : Change those icons
-        if self.valid:
+        if self._isValid:
             c.print(f"✅ {self._actual.name}", style='bold green')
         else:
             c.print(f"❌ {self._actual.name}", style='bold red')
         
-        if (not self.valid) or print_values:
+        if (not self._isValid) or print_values:
             arrays_str = np.array2string(np.stack([self._expected.values(), self._actual.values()]), suppress_small=True, max_line_width=1e6)
             arrays_str = arrays_str.replace('[', ' ').replace(']', ' ')
             for line, label, style in zip(arrays_str.split('\n'), ['expected', 'actual'], ['cyan', 'dark_orange3']):
                 c.print(f"{label:<8s} ={line}", style=style, highlight=False)
 
+    def printSignal(self, print_values):
+        """
+        Print the actual signal wave
+        """
+        c = Console()
+        c.print(f"❔  {self._actual.name}", style='bold violet')
+        if print_values:
+            arrays_str = np.array2string(np.array(self._actual.values()), suppress_small=True, max_line_width=1e6)
+            arrays_str = arrays_str.replace('[', ' ').replace(']', ' ')
+            c.print(f"{'actual':<8s} ={arrays_str}", style='violet', highlight=False)
+
+
 class Testbench:
+    __test__ = False # This is to prevent pytest from considering this class as  a test class
     def __init__(self, file, entity) -> None:
         """
         Testbench generator
         """
         # File
+        if not exists(file):
+            raise FileNotFoundError(f"File {file} doesn't exist")
         self._file = file
         self.entity = entity
         self.actualOutputSignals = None
         self._lengths = {}
         self.inputSignals = {}
-        self.expectedOutputSignals = {}
+        self._expectedOutputSignals = {}
+        self.actualOutputNames = []
 
     def _add_lengths(self, signals : "list[Signal]"):
-        self._lengths |= {s.name : len(s) for s in signals if s is not None}
+        self._lengths |= {s.name : len(s) for s in signals if (s is not None) and (len(s) > 1)}
 
     def _check_lengths(self):
         g = groupby(list(self._lengths.values()))
@@ -101,8 +148,12 @@ class Testbench:
         TAB = 4*' '
         self.inputSignals = signals
 
-        if signals == {}:
-            raise ValueError("Inputs cannot be empty")
+        if not isinstance(signals, list):
+            raise ValueError("Input must be a list of Signal")
+        if len(signals) == 0:
+            raise ValueError("Input cannot be empty")
+        if not isinstance(signals[0], Signal):
+            raise ValueError("Input must be a list of Signal")
 
         # Check if all the signals are the same length, if they aren't print them
         self._add_lengths(signals)
@@ -119,7 +170,7 @@ class Testbench:
         if signals == {}:
             raise ValueError("Inputs cannot be empty")
 
-        self.expectedOutputSignals = signals
+        self._expectedOutputSignals = signals
 
     def setActualOutputsNames(self, signalsNames : "list[str]"):
         """
@@ -133,7 +184,7 @@ class Testbench:
         Fit all constant signals to size N (create their values vector)
         """
 
-        for l in [self.inputSignals, self.expectedOutputSignals]:
+        for l in [self.inputSignals, self._expectedOutputSignals]:
             for s in l:
                 if s is not None:
                     if len(s) == 1:
@@ -148,7 +199,6 @@ class Testbench:
         # Sample the testbench
         self._fit_constant_signals()
         input_list = ' '.join([f"(fromList [{','.join([str(v) for v in s.values()])}])" for s in self.inputSignals])
-        print(f"Running testbench with {len(input_list)} input(s) and {len(self.expectedOutputSignals)} output(s)")
 
         testbenchOutput = self._clashi.sampleN(self._file, self.N, self.entity, input_list)
         
@@ -158,14 +208,18 @@ class Testbench:
             raise ValueError(f"Number of actual outputs ({len(testbenchOutput)}) doesn't match what was declared ({len(self.actualOutputNames)})")
 
         self._actualOutputs = {}
-        for tbOut, exp, name in zip(testbenchOutput, self.expectedOutputSignals, self.actualOutputNames):
+        for i, (tbOut, name) in enumerate(zip(testbenchOutput, self.actualOutputNames)):
             if name is not None:
                 act = Signal(name)
                 act.fromList(tbOut)
                 self._actualOutputs[name] = act
-                if exp is not None:
+                if i < len(self._expectedOutputSignals):
                     # Do a comparison
-                    self._pairs.append(ExpectedActualPair(exp, act))
+                    exp = self._expectedOutputSignals[i]
+                else:
+                    # Simple add the signal, the SignalChecker will not make the comparison, only print it
+                    exp = None
+                self._pairs.append(SignalChecker(exp, act))
 
     def actualOutputs(self):
         """
@@ -173,13 +227,20 @@ class Testbench:
         """
         return self._actualOutputs
 
+    def getAllSignals(self):
+        """
+        Return all Testbench signals
+        """
+
+        return {signal.name : signal for signal in self.inputSignals + self._expectedOutputSignals if signal is not None} | self._actualOutputs
 
 
-    def __iter__(self):
+
+    def __iter__(self) -> Iterator[Signal]:
         self._signals_iter = iter(self._pairs)
         return self
 
-    def __next__(self):
+    def __next__(self) -> Signal:
         return next(self._signals_iter)
 
     

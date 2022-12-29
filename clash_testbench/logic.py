@@ -1,5 +1,6 @@
 from enum import Enum
 from random import randint
+import numpy as np
 
 class Level(Enum):
     LOW = 0
@@ -17,7 +18,11 @@ class Sample:
         colorIndex : int
             Index of the signal color
         """
+        if not (np.issubdtype(type(value), np.integer) or isinstance(value, str) or isinstance(value, Level)):
+            raise TypeError(f"Cannot set a sample with value type : {type(value)}")
+        
         self._value = value
+
         self.colorIndex = colorIndex
 
     def __str__(self) -> str:
@@ -37,14 +42,24 @@ class Sample:
         return self._value.__repr__()
 
 class Signal:
-    def __init__(self, name) -> None:
+    def __init__(self, name : str, values : list = None) -> None:
         self.name = name
 
         self.samples : "list[Sample]" = []
 
+
+        if values is not None:
+            if isinstance(values, np.ndarray):
+                self.fromList(values.tolist())
+            else:
+                self.fromList(values)
+
     def __iadd__(self, x):
         if isinstance(x, Sample):
             self.samples.append(x)
+        elif isinstance(x, list) or isinstance(x, np.ndarray):
+            for xi in x:
+                self.samples.append(Sample(xi))
         else:
             raise TypeError(f"Cannot add type {type(x)} to Signal")
         return self
@@ -62,8 +77,15 @@ class Signal:
     def __setitem__(self, key, value):
         if isinstance(key, int):
             self.samples[key] = Sample(value)
-        else:
-            # TODO add this
+        elif isinstance(key, slice):
+            if isinstance(value, list):
+                self.samples[key] = [Sample(value) for value in value]
+            else:
+                # dirty hack, create a constant list of the same size and slice it the same way
+                self.samples[key] = ([Sample(value)] * len(self.samples))[key]
+
+
+
             pass
 
     def __len__(self):
@@ -92,8 +114,13 @@ class Signal:
         """
         Return a list of all samples
         """
-        print(f"samples = {self.samples} ({type(self.samples[0])})")
         return [s.value() for s in self.samples]
+
+    def __str__(self) -> str:
+        return f"Signal {self.name} : {self.samples}"
+    
+    def __repr__(self) -> str:
+        return self.__str__()
 
 
     

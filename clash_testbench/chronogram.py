@@ -1,6 +1,19 @@
 from .logic import *
 import json
 import wavedrom
+import numpy as np
+from .testbench import Testbench
+
+from os.path import splitext, join, exists
+from os import remove
+
+try:
+    # TODO : Find a library that procudes valid .pdf
+    #from svglib.svglib import svg2rlg
+    #from reportlab.graphics import renderPDF
+    _has_pdf = False
+except ModuleNotFoundError:
+    _has_pdf = False
 
 WD_KEY_NAME = 'name'
 WD_KEY_WAVE = 'wave'
@@ -23,12 +36,15 @@ WD_LOGIC_SYMBOL = {
     Level.LOW: '0',
     Level.HIGH: '1',
     Level.UNKNOWN: 'x',
-    0: '0',
-    1: '1'
+    #0 : '0',
+    #1 : '1',
+    '0' : '0',
+    '1' : '1'
 }
 
 
-def isClock(entry: dict):
+
+def _isClock(entry: dict):
     """
     Check if an entry has a clock wave
 
@@ -46,7 +62,7 @@ def isClock(entry: dict):
     return False
 
 
-def symbolDataToSample(symbol: str, data=None) -> Sample:
+def _symbolDataToSample(symbol: str, data=None) -> Sample:
     """
     Convert a symbol (+data) to a sample
 
@@ -57,6 +73,9 @@ def symbolDataToSample(symbol: str, data=None) -> Sample:
     data : int or str
         An optional data value for this symbol
     """
+    if not isinstance(symbol, str):
+        raise TypeError(f"symbol of type '{type(symbol)}' isn't allowed")
+
     if symbol in WD_SYMBOL_LOGIC:
         # Data doesn't matter
         return Sample(WD_SYMBOL_LOGIC[symbol])
@@ -67,7 +86,7 @@ def symbolDataToSample(symbol: str, data=None) -> Sample:
         return Sample(data, colorIndex=WD_DATA_SYMBOLS.index(symbol))
 
 
-def sampleToSymbolData(sample: Sample):
+def _sampleToSymbolData(sample: Sample):
     """
     Convert a sample to symbol (+ data)
 
@@ -85,7 +104,7 @@ def sampleToSymbolData(sample: Sample):
     if sample._value in WD_LOGIC_SYMBOL:
         # It is a logic level
         wave = WD_LOGIC_SYMBOL[sample._value]
-    elif isinstance(sample._value, str) or isinstance(sample._value, int):
+    elif isinstance(sample._value, str) or np.issubdtype(type(sample._value), np.integer):
         # int 0 and 1 are taken care of above
         wave = WD_DATA_SYMBOLS[sample.colorIndex]
         data = sample._value
@@ -96,7 +115,7 @@ def sampleToSymbolData(sample: Sample):
     return wave, data
 
 
-def compress(wave: list, data: list = None):
+def _compress(wave: list, data: list = None):
     """
     Compress a WD wave ['0', '0', '0', '1', '1', '1'] -> 0..1..
     Data (if supplied) is also compressed
@@ -126,7 +145,7 @@ def compress(wave: list, data: list = None):
         return new_wave, new_data
 
 
-def uncompress(wave: str, data: list = None):
+def _uncompress(wave: str, data: list = None):
     """
     Uncompress a WD wave
     '0..1..' -> ['0', '0', '0', '1', '1', '1']
@@ -160,15 +179,11 @@ def uncompress(wave: str, data: list = None):
             else:
                 raise ValueError(f"Couldn't parse symbol : '{w}'")
 
-    #print(f"{wave}, {data} -> {new_wave}, {new_data}")
-
-    if data is None:
-        return new_wave
-    else:
-        return new_wave, new_data
+    
+    return new_wave, new_data
 
 
-def entryToSignal(entry: dict):
+def _entryToSignal(entry: dict):
     """
     Convert an entry (wave, data and name)
 
@@ -191,22 +206,18 @@ def entryToSignal(entry: dict):
     data, wave, name = entry.get(WD_KEY_DATA), entry.get(
         WD_KEY_WAVE), entry.get(WD_KEY_NAME)
     # 2) Uncompress the signal (remove the '.')
-    if data is None:
-        uwave = uncompress(wave)
-        udata = [None] * len(uwave)
-    else:
-        uwave, udata = uncompress(wave, data)
+    uwave, udata = _uncompress(wave, data)
 
     # 3) Create the signal
     signal = Signal(name)
 
     for w, d in zip(uwave, udata):
-        signal += symbolDataToSample(w, d)
+        signal += _symbolDataToSample(w, d)
 
     return signal
 
 
-def signalToEntry(signal: Signal) -> dict:
+def _signalToEntry(signal: Signal) -> dict:
     """
     Convert a signal to an entry (data, wave, name)
 
@@ -226,11 +237,11 @@ def signalToEntry(signal: Signal) -> dict:
     # 2) Add the samples
 
     for sample in signal:
-        w, d = sampleToSymbolData(sample)
+        w, d = _sampleToSymbolData(sample)
         uwave.append(w)
         udata.append(d)
 
-    entry[WD_KEY_WAVE], entry[WD_KEY_DATA] = compress(uwave, udata)
+    entry[WD_KEY_WAVE], entry[WD_KEY_DATA] = _compress(uwave, udata)
 
     return entry
 
@@ -261,19 +272,27 @@ class Chronogram:
             if None (default), a new chronogram will be made
         """
 
-        # 1) Read the json file
-        with open(file, 'r', encoding='utf-8') as f:
-            self._json_content = json.load(f)
+        self._file = file
 
-            # 1) List all of the entries and create a tree of their position based on their names
-            #    note : no two entries can have the same name
-            self.updateEntriesTree()
+        if file:
+            # Read the json file
+            with open(file, 'r', encoding='utf-8') as f:
+                self._json_content = json.load(f)
+
+                
+        else:
+            # Create an empty json
+            self._json_content = {}
+            self._json_content[WD_KEY_MAIN] = []
+
+        # List all of the entries and create a tree of their position based on their names
+        #  note : no two entries can have the same name
+        self._updateEntriesTree()
 
         self._templates = None
+        
 
-        self._signals = self.getSignals()
-
-    def updateEntriesTree(self):
+    def _updateEntriesTree(self):
         entries = _listWDEntries(self._json_content[WD_KEY_MAIN])
         self._entriesTree = {}
         for branch, entry in entries:
@@ -290,6 +309,8 @@ class Chronogram:
                 else:
                     # This entry is ignored
                     raise ValueError(f"Entry {entry} does not have a name")
+
+        self._signals = self.getSignals()
 
     def _WDGetEntry(self, branch: list) -> dict:
         """
@@ -357,41 +378,48 @@ class Chronogram:
         if names is None:
             for name, branch in self._entriesTree.items():
                 entry = self._WDGetEntry(branch)
-                if WD_KEY_WAVE in entry and not isClock(entry):
-                    output[name] = entryToSignal(entry)
+                if WD_KEY_WAVE in entry and not _isClock(entry):
+                    output[name] = _entryToSignal(entry)
         else:
             for n in names:
                 if n not in self._entriesTree:
                     raise ValueError(
                         f"name {n} doesn't exist inside this chronogram")
                 entry = self._WDGetEntry(self._entriesTree[n])
-                output[n] = entryToSignal(entry)
+                output[n] = _entryToSignal(entry)
 
         return output
 
-    def setSignals(self, signals: dict):
+    def setSignals(self, signals: "list[Signal]"):
         """
         Set a list of signals
 
         Parameters
         ----------
-        signals : dict
+        signals : list or dict
             List of signals
         """
+        if isinstance(signals, dict):
+            signals = list(signals.values())
 
-        for _name, signal in signals.items():
-            # Update the name of the signal, just to be sure
-            signal.name = _name
 
-            if _name in self._entriesTree:
+        if not isinstance(signals, list):
+            raise TypeError("Input must be a list or dict of Signal")
+        if len(signals) == 0:
+            raise ValueError("Input cannot be empty")
+        if not isinstance(signals[0], Signal):
+            raise TypeError("Input must be a list or dict of Signal")
+
+        for signal in signals:
+            if signal.name in self._entriesTree:
                 # Edit the entry
-                self._WDSetEntry(signalToEntry(signal),
-                                 self._entriesTree[_name])
+                self._WDSetEntry(_signalToEntry(signal),
+                                 self._entriesTree[signal.name])
             else:
                 # Create a new one
-                self._WDAddEntry(signalToEntry(signal))
+                self._WDAddEntry(_signalToEntry(signal))
 
-    def applyTemplate(self, entry: dict, entry_template: dict) -> dict:
+    def _applyTemplate(self, entry: dict, entry_template: dict) -> dict:
         """
         Apply a template to an entry
 
@@ -410,10 +438,11 @@ class Chronogram:
             raise RuntimeError(
                 "Cannot apply template to an entry that doesn't contain a data field")
 
-        uwave, udata = uncompress(
+        uwave, udata = _uncompress(
             entry.get(WD_KEY_WAVE), entry.get(WD_KEY_DATA))
-        uwavet, udatat = uncompress(entry_template.get(
+        uwavet, udatat = _uncompress(entry_template.get(
             WD_KEY_WAVE), entry_template.get(WD_KEY_DATA))
+
         if len(uwave) != len(uwavet):
             raise RuntimeError(
                 f"Length of entry and template entry do not match ! ({len(uwave)})/({len(uwavet)})")
@@ -436,8 +465,19 @@ class Chronogram:
                     else:
                         # Only the colors needs to be changed
                         pass
+                elif wt in [WD_LOGIC_HIGH, WD_LOGIC_LOW]:
+                    # Convert to logic high/low, check if the data is valid for that
+                    if d in ['0', 0, 'False', 'false', 'FALSE']:
+                        udatan[i] = None
+                        uwaven[i] = WD_LOGIC_LOW
+                    elif d in ['1', 1, 'True', 'true', 'TRUE']:
+                        udatan[i] = None
+                        uwaven[i] = WD_LOGIC_HIGH
+
+
+
         
-        waven, datan = compress(uwaven, udatan)
+        waven, datan = _compress(uwaven, udatan)
 
         new_entry[WD_KEY_DATA] = datan
         new_entry[WD_KEY_WAVE] = waven
@@ -455,7 +495,7 @@ class Chronogram:
         """
         self._templates = templates
 
-    def applyTemplates(self):
+    def _applyTemplates(self):
         """
         Apply templates to all the signals
         """
@@ -466,8 +506,18 @@ class Chronogram:
                     template = self._WDGetEntry(
                         self._entriesTree[self._templates[_name]])
                     entry = self._WDGetEntry(self._entriesTree[_name])
-                    self._WDSetEntry(self.applyTemplate(
+                    self._WDSetEntry(self._applyTemplate(
                         entry, template), branch)
+
+    def loadTestbench(self, tb : Testbench):
+        """
+        Load the testbench inside the chronogram
+        
+        Parameters
+        ----------
+        tb : Testbench
+        """
+        self.setSignals(tb.getAllSignals())
 
     def saveJson(self, output_file: str):
         """
@@ -478,26 +528,80 @@ class Chronogram:
         output_file : str
             Output file path
         """
-        self.updateEntriesTree()
-        self.applyTemplates()
+        self._updateEntriesTree()
+        self._applyTemplates()
 
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(self._json_content, f, indent=2)
 
-    def saveSVG(self, output_file: str):
+    def saveSVG(self, output_file: str = None):
         """
-        Output the chronogram to an SVG file
+        Save the chronogram as a .svg file
 
         Parameters
         ----------
         output_file : str
             Output file path
         """
-        self.updateEntriesTree()
-        self.applyTemplates()
+        if output_file is None:
+            if self._file is None:
+                raise ValueError("Cannot determine output file name, please provide one")
+            output_file = splitext(self._file)[0] + '.svg'
+
+        self._updateEntriesTree()
+        self._applyTemplates()
 
         svg = wavedrom.render(str(self._json_content))
         svg.saveas(output_file)
+
+    def savePDF(self, output_file: str = None):
+        """
+        Save the chronogram as a .pdf file
+
+        Parameters
+        ----------
+        output_file : str
+            Output file path
+        """
+        SVG_TEMP_FILE = 'tb_svg_temp.svg'
+
+        if output_file is None:
+            if self._file is None:
+                raise ValueError("Cannot determine output file name, please provide one")
+            output_file = splitext(self._file)[0] + '.pdf'
+
+        print(f"output = {output_file}")
+        print(splitext(self._file))
+
+
+
+        if not _has_pdf:
+            raise "Cannot save to PDF if svglib and reportlab modules are missing"            
+
+        self.saveSVG(SVG_TEMP_FILE)
+
+#        drawing = svg2rlg(SVG_TEMP_FILE)
+#        renderPDF.drawToFile(drawing, output_file)
+
+        if exists(SVG_TEMP_FILE):
+            remove(SVG_TEMP_FILE)
+
     
     def __getitem__(self, key):
         return self._signals[key]
+
+    def __setitem__(self, key, value : Signal):
+        if not isinstance(value, Signal):
+            raise TypeError(f"Cannot assign value of type '{type(value)}'")
+        value.name = key
+        if isinstance(key, str):
+            # Apply the template to the new entry
+            branch = self._entriesTree[value.name]
+            old_entry = self._WDGetEntry(branch)
+            new_entry = _signalToEntry(value)
+            new_entry_t = self._applyTemplate(new_entry, old_entry)
+            self._WDSetEntry(new_entry_t, branch)
+
+            self._updateEntriesTree()
+        else:
+            raise KeyError(f"Unsupported key : '{key}'")
