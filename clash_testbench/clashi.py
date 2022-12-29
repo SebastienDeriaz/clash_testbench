@@ -8,19 +8,24 @@ from subprocess import PIPE, Popen, TimeoutExpired
 import re
 import numpy as np
 
-_PROMPT = b"clashi>"
+import pexpect
+
+_PROMPT = "clashi>"
 class Clashi:
     def __init__(self):
         """
         Clashi instance
         """
         try:
-            self._process = Popen(['clashi'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+            self._process = pexpect.spawn('clashi', encoding='ASCII')
+            self._process.expect(_PROMPT)
+            #self._process = Popen(['clashi'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
         except FileNotFoundError as e:
             raise RuntimeError("Couldn't find clashi in the current environment")
+        
 
-    def _runCommand(self, command, timeout):
+    def _runCommand(self, command, timeout = -1):
         """
         Run a clashi command
 
@@ -35,15 +40,31 @@ class Clashi:
         stderr : bytes
         """
         # Everything is done at once because the communication method can only be called once
-        try:
-            try:
-                stdout, stderr = self._process.communicate(command, timeout=20.0)
-            except TimeoutExpired:
-                self._process.kill()
-                raise TimeoutError("Clashi command timeout")
-        except KeyboardInterrupt as e:
-            self._process.kill()
-            raise e
+        self._process.send(command + '\n')
+        self._process.expect(_PROMPT, timeout=timeout)
+        # Return the 
+        raw_output = self._process.before
+        # Convert \x1b> to \n (because that's what clashi uses ??)
+        filtered_output = raw_output.replace('\x1b>', '\n')
+        # Remove all other ANSI escape codes
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        filtered_output = ansi_escape.sub('', filtered_output)
+        # Split lines
+        split_output = filtered_output.splitlines()
+        # Only keep the middle ones (remove the function call and the last line break)
+        output = '\n'.join(split_output[1:-1])
+
+        return output
+
+        # try:
+        #     try:
+        #         stdout, stderr = self._process.communicate(command, timeout=20.0)
+        #     except TimeoutExpired:
+        #         self._process.kill()
+        #         raise TimeoutError("Clashi command timeout")
+        # except KeyboardInterrupt as e:
+        #     self._process.kill()
+        #     raise e
 
 
     def sampleN(self, file, N, entity, inputs):
@@ -54,7 +75,10 @@ class Clashi:
         load_file_command = f':l {file}\n'
         # Run the testbench command
         command = f'sampleN @System {N} ({entity} {inputs})\n'
-
+        
+        # Load the file
+        self._runCommand(load_file_command)
+        
         #print(load_file_command)
         #print(command)
 
@@ -103,20 +127,19 @@ class Clashi:
         output : str
         """
         # Load the file
-        load_file_command = f':l {file}\n'
+        load_file_command = f':l {file}'
         # Run the testbench command
-        command = f'{entity} {" ".join(inputs)}\n'
+        command = f'{entity} {" ".join(inputs)}'
+        
+        print(self._runCommand(load_file_command))
+        
+        output = self._runCommand(command)
 
-        # Everything is done at once because the communication method can only be called once
-        stdout, stderr = self._runCommand(load_file_command + command)
+        return output
 
-        if stderr:
-            # An error occured
-            raise RuntimeError(stderr.decode('utf-8'))
-
-        print(f"testFunction output : {stdout}")
-
-        return stdout
+    def __del__(self):
+        self._process.kill(1)
+        self._process.terminate()
 
         
 
