@@ -12,18 +12,26 @@ import pexpect
 
 _PROMPT = "clashi>"
 class Clashi:
-    def __init__(self):
+    def __init__(self, file):
         """
         Clashi instance
         """
         try:
-            self._process = pexpect.spawn('clashi', encoding='ASCII')
+            self._process = pexpect.spawn('clashi', encoding='utf-8')
             self._process.expect(_PROMPT)
+
             #self._process = Popen(['clashi'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
         except FileNotFoundError as e:
             raise RuntimeError("Couldn't find clashi in the current environment")
-        
+
+        # Remove delays (allows for quicker function test)
+        self._process.delayafterread = None
+        self._process.delaybeforesend = None
+
+        load_file_command = f':l {file}'
+
+        self._runCommand(load_file_command)        
 
     def _runCommand(self, command, timeout = -1):
         """
@@ -40,10 +48,16 @@ class Clashi:
         stderr : bytes
         """
         # Everything is done at once because the communication method can only be called once
+        
         self._process.send(command + '\n')
         self._process.expect(_PROMPT, timeout=timeout)
-        # Return the 
+
         raw_output = self._process.before
+
+        if 'error:' in raw_output or 'Exception:' in raw_output:
+            raise RuntimeError(raw_output)
+
+        # Return the 
         # Convert \x1b> to \n (because that's what clashi uses ??)
         filtered_output = raw_output.replace('\x1b>', '\n')
         # Remove all other ANSI escape codes
@@ -67,32 +81,19 @@ class Clashi:
         #     raise e
 
 
-    def sampleN(self, file, N, entity, inputs):
+    def sampleN(self, N, entity, inputs):
         """
         run SampleN on a specified module
         """
-        # Load the file
-        load_file_command = f':l {file}\n'
         # Run the testbench command
         command = f'sampleN @System {N} ({entity} {inputs})\n'
-        
-        # Load the file
-        self._runCommand(load_file_command)
-        
-        #print(load_file_command)
-        #print(command)
 
-        stdout, stderr = self._runCommand((load_file_command + command).encode('utf-8'))
-
-        if stderr:
-            # An error occured
-            raise RuntimeError(stderr.decode('utf-8'))
+        output = self._runCommand((command))
         # The testbench output is located one line before the "leaving ghci" message
-        testbench_output = (stdout.split(_PROMPT)[-2]).decode('utf-8')
         # Capture the groups
-        if '(' in testbench_output:
+        if '(' in output:
             # It's a list of tuples
-            groups = re.findall(r'(\([\w,]+\))', testbench_output)
+            groups = re.findall(r'(\([\w,]+\))', output)
             # Remove the ( ) and split by comma
             list_of_tuples = [x[1:-1].split(',') for x in groups]
 
@@ -102,21 +103,19 @@ class Clashi:
             
         else:
             # It's only comma-separated values
-            raw = ''.join([c for c in testbench_output if str.isdigit(c) or c == ','])
+            raw = ''.join([c for c in output if str.isdigit(c) or c == ','])
             # Making a list of list, because there's only one signal
             output = [raw.split(',')]
 
         # output is a list of tuples (with each value corresponding to an output)
         return output
     
-    def testFunction(self, file : str, entity : str, inputs : list[str]):
+    def testFunction(self, entity : str, inputs : list[str]):
         """
         Test a function with the given arguments
 
         Parameters
         ----------
-        file : str
-            Path to the .hs file
         entity : str
             Name of the entity / function
         inputs : list[str]
@@ -127,11 +126,9 @@ class Clashi:
         output : str
         """
         # Load the file
-        load_file_command = f':l {file}'
+        
         # Run the testbench command
         command = f'{entity} {" ".join(inputs)}'
-        
-        print(self._runCommand(load_file_command))
         
         output = self._runCommand(command)
 

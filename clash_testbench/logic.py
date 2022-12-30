@@ -51,6 +51,8 @@ class Signal:
         if values is not None:
             if isinstance(values, np.ndarray):
                 self.fromList(values.tolist())
+            elif isinstance(values, int):
+                self.fromList([values])
             else:
                 self.fromList(values)
 

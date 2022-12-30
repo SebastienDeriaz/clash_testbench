@@ -193,14 +193,12 @@ class Testbench:
 
     def run(self):
 
-        self._clashi = Clashi()
-        # Load the two files
-        #self._clashi.load(self._file)
+        self._clashi = Clashi(self._file)
         # Sample the testbench
         self._fit_constant_signals()
         input_list = ' '.join([f"(fromList [{','.join([str(v) for v in s.values()])}])" for s in self.inputSignals])
 
-        testbenchOutput = self._clashi.sampleN(self._file, self.N, self.entity, input_list)
+        testbenchOutput = self._clashi.sampleN(self.N, self.entity, input_list)
         
         self._pairs = []
 
