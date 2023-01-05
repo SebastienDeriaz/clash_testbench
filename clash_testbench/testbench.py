@@ -112,9 +112,18 @@ class SignalChecker:
 
 class Testbench:
     __test__ = False # This is to prevent pytest from considering this class as  a test class
-    def __init__(self, file, entity) -> None:
+    def __init__(self, file : str, entity : str, verbose : bool = False) -> None:
         """
         Testbench generator
+
+        Parameters
+        ----------
+        file : str
+            File path
+        entity : str
+            Name of the entity
+        verbose : bool
+            Print debug information
         """
         # File
         if not exists(file):
@@ -126,6 +135,7 @@ class Testbench:
         self.inputSignals = {}
         self._expectedOutputSignals = {}
         self.actualOutputNames = []
+        self._verbose = verbose
 
     def _add_lengths(self, signals : "list[Signal]"):
         self._lengths |= {s.name : len(s) for s in signals if (s is not None) and (len(s) > 1)}
@@ -193,13 +203,13 @@ class Testbench:
 
     def run(self):
 
-        self._clashi = Clashi(self._file)
+        self._clashi = Clashi(self._file, self._verbose)
         # Sample the testbench
         self._fit_constant_signals()
         input_list = ' '.join([f"(fromList [{','.join([str(v) for v in s.values()])}])" for s in self.inputSignals])
 
-        testbenchOutput = self._clashi.sampleN(self.N, self.entity, input_list)
-        
+        testbenchOutput = self._clashi.sampleN(self.N, self.entity, input_list, len(self.actualOutputNames) == 1)
+
         self._pairs = []
 
         if len(testbenchOutput) != len(self.actualOutputNames):
